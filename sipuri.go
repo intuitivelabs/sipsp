@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// FIXME: not working, buggy, see tmp/parseuri/parseuri
+// TODO: unit test
 
 func DBG(f string, a ...interface{}) {
 	fmt.Printf("sipsp: "+f, a...)

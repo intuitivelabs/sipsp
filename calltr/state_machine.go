@@ -4,24 +4,62 @@ import (
 	"andrei/sipsp"
 )
 
+// return true if this looks like a request retr.
+func reqRetr(e *CallEntry, m *sipsp.PSIPMsg, dir int) bool {
+	mcseq := m.PV.CSeq.CSeqNo
+	mmethod := m.FL.MethodNo
+	if mcseq < e.CSeq[dir] ||
+		(mcseq == e.CSeq[dir] &&
+			mmethod != sipsp.MAck && mmethod != sipsp.MCancel) {
+		return true
+	}
+	return false
+}
+
+// return true if the status code s is a 2xx
+func is2xx(s uint16) bool {
+	return (s <= 299) && (s >= 200)
+}
+
+func authFailure(s uint16) bool {
+	return (s == 401) || (s == 407)
+}
+
+// return true if this looks like a reply retr.
+func replRetr(e *CallEntry, m *sipsp.PSIPMsg, dir int) bool {
+	mstatus := m.FL.Status
+	mcseq := m.PV.CSeq.CSeqNo
+	if mcseq < e.CSeq[dir] || mcseq < e.ReplCSeq[dir] ||
+		(mcseq == e.ReplCSeq[dir] &&
+			mstatus <= e.ReplStatus[dir] &&
+			(!is2xx(mstatus) || is2xx(e.ReplStatus[dir]))) {
+		return true
+	}
+	return false
+}
+
 // updateStateReq() updates the call state in a forgiving maximum compatibility
 // mode (it will try to recover from skipped messages), for a given request
 // message.
 // It uses the message method, cseq, presence/absence of the totag and the
 // "direction" of the message to check for retransmissions (which will not
 // cause a state change).
-// dir is the direction and it's 0 for requests from the caller and 1 for
-// requests from the callee.
+// dir is the direction of the "transaction initiator": it's 0 for requests
+// from the caller and  replies from the callee (totag matches exactly) and
+// 1 for requests from the callee and replies from the caller (totag matches
+// fromtag).
 // See also updateStateRepl().
-func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) CallState {
+// It returns the cuurent, updtead CallState and a EventType
+// The EventType is not checked for uniqueness (e.g. several call-start could
+// be generated one-after-another if several 2xx arrive)
+func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, EventType) {
 	mmethod := m.FL.MethodNo
 	mcseq := m.PV.CSeq.CSeqNo
 	mhastotag := !m.PV.To.Tag.Empty()
 	prevState := e.State
 	newState := CallStNone
-	if mcseq < e.CSeq[dir] ||
-		(mcseq == e.CSeq[dir] &&
-			mmethod != sipsp.MAck && mmethod != sipsp.MCancel) ||
+	event := EvNone
+	if reqRetr(e, m, dir) ||
 		mmethod == sipsp.MPrack /* ignore PRACKs */ ||
 		mmethod == sipsp.MUpdate /* ignore UPDATEs */ {
 		// retransmission
@@ -32,11 +70,13 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) CallState {
 	switch mmethod {
 	case sipsp.MBye:
 		newState = CallStBye
+		event = EvCallEnd // for extra reliability: both on BYE and BYE repl.
 	case sipsp.MCancel:
 		switch prevState {
 		case CallStInit, CallStFInv, CallStEarlyDlg:
 			// not 100% conformant, but more "compatible" with broken UAs
 			newState = CallStCanceled
+			event = EvCallAttempt
 		default:
 			newState = prevState // ignore CANCEL, keep old state
 		}
@@ -45,8 +85,9 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) CallState {
 		if mhastotag {
 			switch prevState {
 			case CallStInit, CallStFInv, CallStEarlyDlg:
-				// reply missed somehow
+				// reply missed somehow, recover...
 				newState = CallStEstablished
+				event = EvCallStart
 			default:
 				newState = prevState // keep same state
 			}
@@ -76,9 +117,9 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) CallState {
 end:
 	// update state
 	e.State = newState
-	return newState
+	return newState, event
 retr: // retransmission or PRACK
-	return prevState // do nothing
+	return prevState, event // do nothing
 }
 
 // updateStateRepl() updates the call state in a forgiving maximum
@@ -87,21 +128,29 @@ retr: // retransmission or PRACK
 // It uses the reply status code, cseq method, cseq, presence/absence of the
 // totag and the "direction" of the message to check for retransmissions
 // (which will not cause a state change).
-// dir is the direction and it's 1 for replies from the caller and 0 for
-// replies from the callee.
+// dir is the direction of the "transaction initiator": it's 0 for requests
+// from the caller and  replies from the callee (totag matches exactly) and
+// 1 for requests from the callee and replies from the caller (totag matches
+// fromtag).
 // See also updateStateReq().
-func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) CallState {
+// It returns the cuurent, updtead CallState and a EventType.
+// The EventType is not checked for uniqueness (e.g. several call-start could
+// be generated one-after-another if several 2xx arrive)
+// TODO: event support for REGISTER (full with deletions and expires) and
+//      SUBSCRIBE/NOTIFY (requires extra parsing)
+func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, EventType) {
 	mstatus := m.FL.Status
 	mmethod := m.PV.CSeq.MethodNo
 	mcseq := m.PV.CSeq.CSeqNo
 	//mhastotag := !m.PV.To.Tag.Empty()
 	prevState := e.State
 	newState := CallStNone
+	event := EvNone
 	// check for retransmissions
 	// in the forking case, simultaneous 2xx on multiple branches will
-	// have differetn To tags => we can ignore them here
-	if mcseq < e.CSeq[dir] || mcseq < e.ReplCSeq[dir] ||
-		(mcseq == e.ReplCSeq[dir] && mstatus <= e.ReplStatus[dir]) ||
+	// have different To tags => we could ignore them here (but it's
+	// easier to handle them too in case of forked call-state)
+	if replRetr(e, m, dir) ||
 		mmethod == sipsp.MPrack /* ignore PRACKs */ ||
 		mmethod == sipsp.MUpdate /* ignore UPDATEs */ {
 		goto retr // retransmission
@@ -115,11 +164,13 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) CallState {
 		case CallStInit, CallStFInv, CallStEarlyDlg:
 			// not 100% conformant, but more "compatible" with broken UAs
 			newState = CallStCanceled
+			event = EvCallAttempt
 		default:
 			newState = prevState // keep current state, ignore CANCEL repl.*/
 		}
 	case sipsp.MBye:
 		newState = CallStByeReplied
+		event = EvCallEnd // ignore the actual BYE reply code
 	default:
 		switch {
 		case mstatus > 299:
@@ -137,31 +188,73 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) CallState {
 					newState = CallStNegReply
 				} else {
 					newState = CallStNonInvNegReply
+					// no event for non-INV. neg. replies
 				}
 			case CallStFInv, CallStEarlyDlg:
 				newState = CallStNegReply
+				// we might have here an auth. failure (and we want to
+				// report it only if we already seen one before on this
+				// dialog, handled below, outside the case:) or a failure
+				// of one of the branches (in which case we still want to
+				// wait to see if we get a 2xx -- we will report EvCallAttempt
+				// on timeout...)
 			case CallStFNonInv:
 				newState = CallStNonInvNegReply
+				// no event here
 			default:
 				newState = prevState // keep the current state
 			}
+			// set event / handle auth. failure
+			if authFailure(mstatus) {
+				if e.ReplStatus[dir] == mstatus {
+					//already seen, this is the 2nd one
+					event = EvAuthFailed
+				}
+			} /* else rely on timeout for EvCallAttempt to be sure that
+			    a possible 2xx after a neg. reply is properly handled.
+				If this is not desired uncomment the code below. */
+			/*
+				else if mmethod == sipsp.MInvite {
+				event = EvCallAttempt // only for INVITEs
+			} */
 		case mstatus >= 200:
 			switch prevState {
 			case CallStInit:
 				// 2xx reply for which we haven't seen the request => recover
 				if mmethod == sipsp.MInvite {
 					newState = CallStEstablished
+					event = EvCallStart
 				} else {
 					newState = CallStNonInvFinished
+					if mmethod == sipsp.MRegister {
+						event = EvRegNew
+						// TODO: look for contact and expires == 0, it might
+						//       be in fact an EvRegDel
+					}
 				}
-			case CallStFInv, CallStEarlyDlg, CallStEstablished:
+			case CallStNegReply:
+				// allow 2xx after negative replies (e.g. branches one
+				// replies with neg. reply, another with 200)
+				fallthrough
+			case CallStFInv, CallStEarlyDlg:
 				newState = CallStEstablished
+				event = EvCallStart
+			case CallStEstablished:
+				// do nothing
+			case CallStNonInvNegReply:
+				// allow 2xx after negative replies
+				fallthrough
 			case CallStFNonInv:
 				newState = CallStNonInvFinished
+				if mmethod == sipsp.MRegister {
+					event = EvRegNew
+					// TODO: look for contact and expires == 0, it might
+					//       be in fact an EvRegDel
+				}
 			default:
 				newState = prevState // keep the current state
 			}
-		default:
+		default: // <= 199
 			switch prevState {
 			case CallStInit, CallStFInv:
 				newState = CallStEarlyDlg
@@ -172,15 +265,65 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) CallState {
 	}
 	//end:
 	e.State = newState
-	return newState
+	return newState, event
 retr: // retransmission, ignore
-	return prevState
-
+	return prevState, event
 }
 
-func updateState(e *CallEntry, m *sipsp.PSIPMsg, dir int) CallState {
+func updateState(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, EventType) {
 	if m.FL.Request() {
 		return updateStateReq(e, m, dir)
 	}
 	return updateStateRepl(e, m, dir)
+}
+
+// finalTimeoutEv() should be called before destroying and expired call entry.
+// It returns the final EventType
+func finalTimeoutEv(e *CallEntry) EventType {
+
+	event := EvNone
+	switch e.State {
+	case CallStFInv: // un-replied INVITE, timeout
+		event = EvCallAttempt
+	case CallStEarlyDlg: // early dialog timeout
+		event = EvCallAttempt
+	case CallStEstablished: // call timeout
+		event = EvCallEnd
+
+	case CallStBye: // call established, BYE sent, but not replied
+		event = EvCallEnd // should've been already generated on BYE
+	case CallStByeReplied: // call properly terminated, final timouet
+		event = EvCallEnd // should have been already generated
+	case CallStCanceled:
+		event = EvCallAttempt // should've been already generated
+	case CallStNegReply:
+		// handle auth failure followed by timeout
+		if authFailure(e.ReplStatus[0]) || authFailure(e.ReplStatus[1]) {
+			event = EvAuthFailed
+		} else {
+			// we delay this to final timeout to catch
+			// possible parallel branches 2xxs
+			event = EvCallAttempt
+		}
+
+	// non INVs
+	case CallStFNonInv:
+		// nothing here. For REGISTERs we generate EvRegNew only on reply
+		// so if no reply seen, we won't generate an EvRegDel or EvRegExpired
+	case CallStNonInvNegReply:
+		// we care only about REGISTERs timeouts and timeout after
+		// auth. failure at this point. TODO: SUBSCRIBE
+		if authFailure(e.ReplStatus[0]) || authFailure(e.ReplStatus[1]) {
+			event = EvAuthFailed
+		}
+		// else if REGISTER, like above, do nothing
+	case CallStNonInvFinished:
+		if e.Method == sipsp.MRegister {
+			event = EvRegExpired
+		}
+
+	case CallStInit:
+		// do nothing, should never reach this.
+	}
+	return event
 }

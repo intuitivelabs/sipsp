@@ -30,6 +30,18 @@ func (m *PSIPMsg) Err() bool {
 	return m.state == SIPMsgErr
 }
 
+func (m *PSIPMsg) Request() bool {
+	return m.FL.Request()
+}
+
+func (m *PSIPMsg) Method() SIPMethod {
+
+	if m.Request() {
+		return m.FL.MethodNo
+	}
+	return m.PV.CSeq.MethodNo
+}
+
 type SIPMsgIState struct {
 	state uint8
 	offs  int

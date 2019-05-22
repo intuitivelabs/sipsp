@@ -23,6 +23,10 @@ func init() {
 // alloc & init a new call entry.
 // returns call entry on success (un-referenced!) or nil on error
 // (too much tag space required, or allocation failure)
+// dir should almost always be 0 (since creating a call-entry after
+// a request comming from the callee should never happen: even if we see
+// first something like that we wouldn't be able to know who initiated the
+// the dialog and hence the dir).
 func newCallEntry(hashNo, cseq uint32, m *sipsp.PSIPMsg, n *[2]NetInfo, dir int) *CallEntry {
 	toTagL := uint(m.PV.To.Tag.Len)
 	if toTagL == 0 { // TODO: < DefaultToTagLen (?)
@@ -59,7 +63,8 @@ func newCallEntry(hashNo, cseq uint32, m *sipsp.PSIPMsg, n *[2]NetInfo, dir int)
 	e.State = CallStInit
 	csTimerInitUnsafe(e, time.Duration(e.State.TimeoutS())*time.Second)
 	e.hashNo = hashNo
-	e.CSeq[0] = cseq // TODO: 0 or dir
+	e.CSeq[dir] = cseq
+	e.Method = m.Method()
 	if n != nil {
 		e.EndPoint = *n // FIXME
 	}
@@ -141,9 +146,14 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 	}
 	n := newCallEntry(e.hashNo, 0, m, &e.EndPoint, dir)
 	if n != nil {
-		// TODO:  make sure all the relevant entry data is clones
-		n.CSeq[0] = e.CSeq[0]     // TODO: 0 or dir
-		n.ReqsNo[0] = e.ReqsNo[0] // TODO: 0 or dir
+		// TODO:  make sure all the relevant entry data is cloned
+		if dir == 0 {
+			n.CSeq[1] = e.CSeq[1]
+		} else {
+			n.CSeq[0] = e.CSeq[0]
+		}
+		n.ReqsNo[0] = e.ReqsNo[0]
+		n.ReqsNo[1] = e.ReqsNo[1]
 	} else {
 		DBG("forkCallEntry: newCallEntry(...) failed\n")
 	}

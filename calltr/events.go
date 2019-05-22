@@ -16,16 +16,26 @@ const (
 	EvCallAttempt
 	EvAuthFailed
 	EvActionLog
+	EvRegNew
+	EvRegDel
+	EvRegExpired
+	EvSubNew
+	EvSubDel
 	EvBad
 )
 
-var evTypeName = [...]string{
+var evTypeName = [EvBad + 1]string{
 	EvNone:        "",
 	EvCallStart:   "call-start",
 	EvCallEnd:     "call-end",
 	EvCallAttempt: "call-attempt",
 	EvAuthFailed:  "auth-failed",
 	EvActionLog:   "action-log",
+	EvRegNew:      "reg-new",
+	EvRegDel:      "reg-del",
+	EvRegExpired:  "reg-expired",
+	EvSubNew:      "sub-new",
+	EvSubDel:      "sub-del",
 	EvBad:         "invalid",
 }
 
@@ -34,6 +44,24 @@ func (e EventType) String() string {
 		e = EvBad
 	}
 	return evTypeName[int(e)]
+}
+
+type EventFlags uint8
+
+// returns previous value
+func (f *EventFlags) Set(e EventType) bool {
+	m := uint(1) << uint(e)
+	ret := (uint(*f) & m) != 0
+	*f = EventFlags(uint(*f) | m)
+	return ret
+}
+
+func (f *EventFlags) Test(e EventType) bool {
+	return uint(*f)&(1<<uint(e)) != 0
+}
+
+func (f *EventFlags) ResetAll() {
+	*f = 0
 }
 
 type CallEvent struct {
@@ -55,10 +83,44 @@ type CallAttrs struct {
 	/* extra headers/msg info:
 	r-uri
 	from-ua
+	from  - uri
+	to    - uri
+	contact
+	*/
+	/* ignored
 	to-ua
 	xcallid
-	from
-	to
 	x-org-connid
 	*/
+}
+
+func fillCallEv(ev EventType, e *CallEntry, callev *CallEvent) {
+	callev.Type = ev
+	callev.Ts = time.Now()
+	callev.Attrs.CallID = e.Key.GetCallID()
+	callev.Attrs.SipCode = e.ReplStatus[0]
+	callev.Attrs.Method = e.Method
+	// TODO: ....
+}
+
+// HandleEvF is a function callback that should handle a new CallEvent.
+// It should copy all the needed information from the passed CallEvent
+// structure, since the date _will_ be overwritten after the call
+// (so all the []byte slices _must_ be copied if needed).
+type HandleEvF func(callev *CallEvent)
+
+// unsafe, should be called either under lock or when is guaranteed that
+// no one can use the call entry in the same time.
+func generateEvent(ev EventType, e *CallEntry, f HandleEvF) bool {
+	if e.EvFlags.Test(ev) {
+		// already generated
+		return false
+	}
+	e.EvFlags.Set(ev)
+	if f != nil {
+		var callev CallEvent
+		fillCallEv(ev, e, &callev)
+		f(&callev)
+	}
+	return true
 }

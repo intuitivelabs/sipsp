@@ -194,9 +194,11 @@ type CallEntry struct {
 	ReqsNo     [2]uint
 	ReplsNo    [2]uint
 	ReplStatus [2]uint16
-	hashNo     uint32 // cache hash value
+	hashNo     uint32          // cache hash value
+	Method     sipsp.SIPMethod // creating method
 	Flags      CallFlags
 	State      CallState
+	EvFlags    EventFlags // sent/generated events
 
 	EndPoint [2]NetInfo
 

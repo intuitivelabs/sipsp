@@ -1,6 +1,7 @@
 package calltr
 
 import (
+	"fmt"
 	"net"
 	"time"
 
@@ -25,7 +26,7 @@ const (
 )
 
 var evTypeName = [EvBad + 1]string{
-	EvNone:        "",
+	EvNone:        "<empty>",
 	EvCallStart:   "call-start",
 	EvCallEnd:     "call-end",
 	EvCallAttempt: "call-attempt",
@@ -46,13 +47,21 @@ func (e EventType) String() string {
 	return evTypeName[int(e)]
 }
 
-type EventFlags uint8
+type EventFlags uint16
 
 // returns previous value
 func (f *EventFlags) Set(e EventType) bool {
 	m := uint(1) << uint(e)
 	ret := (uint(*f) & m) != 0
 	*f = EventFlags(uint(*f) | m)
+	return ret
+}
+
+// returns previous value
+func (f *EventFlags) Clear(e EventType) bool {
+	m := uint(1) << uint(e)
+	ret := (uint(*f) & m) != 0
+	*f = EventFlags(uint(*f) &^ m)
 	return ret
 }
 
@@ -64,51 +73,244 @@ func (f *EventFlags) ResetAll() {
 	*f = 0
 }
 
-type CallEvent struct {
-	Type  EventType
-	Ts    time.Time
-	Attrs CallAttrs
+func (f *EventFlags) String() string {
+	var s string
+	for e := EvNone + 1; e < EvBad; e++ {
+		if f.Test(e) {
+			if s != "" {
+				s += "|" + e.String()
+			} else {
+				s += e.String()
+			}
+		}
+	}
+	return s
 }
 
-type CallAttrs struct {
-	CallID    []byte
-	From      []byte // uri ? not supported
-	To        []byte // uri ? not supported
-	SipCode   uint16 // reply status code
-	Method    sipsp.SIPMethod
-	Transport []byte // text form?
-	Source    net.IP
-	// ? Dest?
-	SrcPort uint16
-	/* extra headers/msg info:
-	r-uri
-	from-ua
-	from  - uri
-	to    - uri
-	contact
-	*/
-	/* ignored
-	to-ua
-	xcallid
-	x-org-connid
-	*/
+// maximum size of an event data buffer
+func EventDataMaxBuf() int {
+	s := MaxTagSpace + 16 /* SrcIP */ + 16 /* DstIP */
+	for i := 0; i < int(AttrLast); i++ {
+		m := int(AttrSpace[i].Max)
+		if m > 0 {
+			s += m
+		}
+	}
+	return s
 }
 
-func fillCallEv(ev EventType, e *CallEntry, callev *CallEvent) {
-	callev.Type = ev
-	callev.Ts = time.Now()
-	callev.Attrs.CallID = e.Key.GetCallID()
-	callev.Attrs.SipCode = e.ReplStatus[0]
-	callev.Attrs.Method = e.Method
-	// TODO: ....
+type EvGenPos uint8 // debugging
+const (
+	EvGenUnknown EvGenPos = iota
+	EvGenReq
+	EvGenRepl
+	EvGenTimeout
+)
+
+func (p EvGenPos) String() string {
+	switch p {
+	case EvGenReq:
+		return "request"
+	case EvGenRepl:
+		return "reply"
+	case EvGenTimeout:
+		return "timeout"
+	}
+	return "unknown"
+}
+
+type EventData struct {
+	Type       EventType
+	Truncated  bool
+	TS         time.Time // event creation time
+	CreatedTS  time.Time // call entry creation
+	StartTS    time.Time // call start
+	Src        net.IP
+	Dst        net.IP
+	SPort      uint16
+	DPort      uint16
+	ProtoF     NAddrFlags
+	ReplStatus uint16
+	CallID     sipsp.PField
+	Attrs      [AttrLast]sipsp.PField
+
+	// debugging
+	ForkedTS  time.Time
+	State     CallState
+	PrevState CallState
+	LastEv    EventType
+	EvFlags   EventFlags
+	CSeq      [2]uint32
+	RCSeq     [2]uint32
+	Reqs      [2]uint
+	Repls     [2]uint
+	FromTag   sipsp.PField
+	ToTag     sipsp.PField
+	EvGen     EvGenPos // where was the event generated
+
+	Valid int    // no of valid, non truncated PFields
+	Used  int    // how much of the buffer is used / current offset
+	Buf   []byte // buffer where all the content is saved
+}
+
+func (ed *EventData) Reset() {
+	buf := ed.Buf
+	*ed = EventData{}
+	ed.Buf = buf
+}
+
+func (ed *EventData) Init(buf []byte) {
+	ed.Reset()
+	ed.Buf = buf
+}
+
+// quick copy hack when there is enough space
+func (ed *EventData) Copy(src *EventData) bool {
+	if len(ed.Buf) < src.Used {
+		// not enough space
+		return false
+	}
+	buf := ed.Buf
+	*ed = *src
+	ed.Buf = buf
+	copy(ed.Buf, src.Buf[:src.Used])
+	return true
+}
+
+func (d *EventData) Fill(ev EventType, e *CallEntry) int {
+	d.Type = ev
+	d.Truncated = false
+	d.TS = time.Now()
+	d.CreatedTS = e.CreatedTS
+	d.StartTS = e.StartTS
+	d.ProtoF = e.EndPoint[0].Proto()
+	ip := e.EndPoint[0].IP()
+	n := copy(d.Buf[d.Used:], ip)
+	d.Src = d.Buf[d.Used : d.Used+n]
+	d.Used += n
+	if n < len(ip) {
+		d.Truncated = true
+		return d.Valid
+	}
+	ip = e.EndPoint[1].IP()
+	n = copy(d.Buf[d.Used:], ip)
+	d.Dst = d.Buf[d.Used : d.Used+n]
+	d.Used += n
+	if n < len(ip) {
+		d.Truncated = true
+		return d.Valid
+	}
+	d.SPort = e.EndPoint[0].Port
+	d.DPort = e.EndPoint[1].Port
+	d.ReplStatus = e.ReplStatus[0]
+
+	//debug stuff
+	d.ForkedTS = e.forkedTS
+	d.State = e.State
+	d.PrevState = e.prevState
+	d.LastEv = e.lastEv
+	d.EvFlags = e.EvFlags
+	d.EvGen = e.evGen
+	d.CSeq = e.CSeq
+	d.RCSeq = e.ReplCSeq
+	d.Reqs = e.ReqsNo
+	d.Repls = e.ReplsNo
+	// end of debug
+
+	n = addPField(&e.Key.CallID, e.Key.buf,
+		&d.CallID, &d.Buf, &d.Used, -1)
+	if n < int(e.Key.CallID.Len) {
+		d.Truncated = true
+		return d.Valid
+	}
+	d.Valid++
+	for i := 0; i < len(d.Attrs); i++ {
+		n = addPField(&e.Info.Attrs[i], e.Info.buf,
+			&d.Attrs[i], &d.Buf, &d.Used, -1)
+		if n != int(e.Info.Attrs[i].Len) {
+			d.Truncated = true
+			break
+		}
+		d.Valid++
+	}
+	// more debug stuff
+	n = addPField(&e.Key.FromTag, e.Key.buf,
+		&d.FromTag, &d.Buf, &d.Used, -1)
+	if n < int(e.Key.FromTag.Len) {
+		d.Truncated = true
+		return d.Valid
+	}
+	n = addPField(&e.Key.ToTag, e.Key.buf,
+		&d.ToTag, &d.Buf, &d.Used, -1)
+	if n < int(e.Key.ToTag.Len) {
+		d.Truncated = true
+		return d.Valid
+	}
+	return d.Valid
+}
+
+// mostly for debugging
+func (ed *EventData) String() string {
+	var duration time.Duration
+	if !ed.StartTS.IsZero() {
+		duration = ed.TS.Sub(ed.StartTS)
+	}
+	s := fmt.Sprintf(
+		"Type: %s [truncated: %v valid fields: %2d used: %5d/%5d]\n"+
+			"	ts        : %s\n"+
+			"	created   : %s (%s ago)\n"+
+			"	call-start: %s duration: %s \n"+
+			"	protocol  : %s  %s:%d -> %s:%d\n"+
+			"	sip.call_id: %s\n"+
+			"	sip.response.status: %3d\n",
+		ed.Type, ed.Truncated, ed.Valid, ed.Used, cap(ed.Buf),
+		ed.TS.Truncate(time.Second),
+		ed.CreatedTS.Truncate(time.Second),
+		time.Now().Sub(ed.CreatedTS).Truncate(time.Second),
+		ed.StartTS.Truncate(time.Second),
+		duration,
+		ed.ProtoF.ProtoName(), ed.Src, ed.SPort, ed.Dst, ed.DPort,
+		ed.CallID.Get(ed.Buf),
+		ed.ReplStatus)
+	for i := 0; i < len(ed.Attrs); i++ {
+		if !ed.Attrs[i].Empty() {
+			s += fmt.Sprintf("	%s: %q\n",
+				CallAttrIdx(i), ed.Attrs[i].Get(ed.Buf))
+		}
+	}
+	s += fmt.Sprintf("	DBG: state: %q  pstate: %q\n", ed.State, ed.PrevState)
+	s += fmt.Sprintf("	DBG: fromTag: %q toTag: %q\n",
+		ed.FromTag.Get(ed.Buf), ed.ToTag.Get(ed.Buf))
+	s += fmt.Sprintf("	DBG:  lastev: %q evF: %s (%2X) generated on: %s\n",
+		ed.LastEv, ed.EvFlags.String(), ed.EvFlags, ed.EvGen.String())
+	s += fmt.Sprintf("	DBG: cseq: %6d/%6d  rcseq: %6d/%6d forked: %s\n",
+		ed.CSeq[0], ed.CSeq[1], ed.RCSeq[0], ed.RCSeq[1], ed.ForkedTS)
+	s += fmt.Sprintf("	DBG: reqNo: %4d/%4d  replNo: %4d/%4d\n",
+		ed.Reqs[0], ed.Reqs[1], ed.Repls[0], ed.Repls[1])
+	return s
 }
 
 // HandleEvF is a function callback that should handle a new CallEvent.
 // It should copy all the needed information from the passed CallEvent
 // structure, since the date _will_ be overwritten after the call
 // (so all the []byte slices _must_ be copied if needed).
-type HandleEvF func(callev *CallEvent)
+type HandleEvF func(callev *EventData)
 
+// update "event state", catching already generated events
+// returns ev or EvNone (if event was a retr)
+func updateEvent(ev EventType, e *CallEntry) EventType {
+	if ev != EvNone && !e.EvFlags.Set(ev) {
+		// event not seen before
+		if ev == EvCallStart || ev == EvRegNew || ev == EvSubNew {
+			e.StartTS = time.Now()
+		}
+		e.lastEv, e.crtEv = e.crtEv, ev // debugging
+		return ev
+	}
+	return EvNone
+}
+
+/*
 // unsafe, should be called either under lock or when is guaranteed that
 // no one can use the call entry in the same time.
 func generateEvent(ev EventType, e *CallEntry, f HandleEvF) bool {
@@ -118,9 +320,12 @@ func generateEvent(ev EventType, e *CallEntry, f HandleEvF) bool {
 	}
 	e.EvFlags.Set(ev)
 	if f != nil {
-		var callev CallEvent
-		fillCallEv(ev, e, &callev)
+		var callev EventData
+		var buf = make([]byte, EventDataMaxBuf())
+		callev.Init(buf)
+		callev.Fill(ev, e)
 		f(&callev)
 	}
 	return true
 }
+*/

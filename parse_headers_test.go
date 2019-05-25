@@ -3,7 +3,9 @@ package sipsp
 import (
 	"bytes"
 	"math/rand"
+	"strings"
 	"testing"
+	"unsafe"
 
 	"andrei/sipsp/bytescase"
 )
@@ -41,7 +43,7 @@ func TestHdrNameLookup(t *testing.T) {
 			" lookup hash has too few elements %d/%d (max %d, crowded %d)\n",
 			len(hdrNameLookup), total, len(hdrName2Type), max, crowded)
 	}
-	if max > 1 {
+	if max > 2 { // Contact & Call-ID hash to the same value
 		t.Errorf("init: hdrNameLookup[%d][..]: max %d, crowded %d, total %d"+
 			" - try increasing hnBitsLen(%d) and/or hnBitsFChar(%d)\n",
 			len(hdrNameLookup), max, crowded, total, hnBitsLen, hnBitsFChar)
@@ -50,6 +52,46 @@ func TestHdrNameLookup(t *testing.T) {
 		t.Logf("init: hdrNameLookup[%d][..]: max %d, crowded %d, total %d\n",
 			len(hdrNameLookup), max, crowded, total)
 	}
+}
+
+func TestHdrFlags(t *testing.T) {
+	var f HdrFlags
+	if unsafe.Sizeof(f)*8 <= uintptr(HdrOther) {
+		t.Errorf("HdrFlags: flags type too small: %d bits but %d needed\n",
+			unsafe.Sizeof(f)*8, HdrOther)
+	}
+	for h := HdrNone; h <= HdrOther; h++ {
+		f.Set(h)
+		if !f.Test(h) {
+			t.Errorf("HdrFlags.Test(%v): wrong return\n", f)
+		}
+	}
+	for h := HdrNone; h <= HdrOther; h++ {
+		f.Clear(h)
+		if f.Test(h) {
+			t.Errorf("HdrFlags.Test(%v): wrong return\n", f)
+		}
+	}
+
+}
+
+func TestHdr2Str(t *testing.T) {
+	if len(hdrTStr) != (int(HdrOther) + 1) {
+		t.Errorf("hdrTStr[]: length mismatch %d/%d\n",
+			len(hdrTStr), int(HdrOther)+1)
+	}
+	for i, v := range hdrTStr {
+		if len(v) == 0 {
+			t.Errorf("hdrTStr[%d]: empty name\n", i)
+		}
+	}
+	for h := HdrNone; h <= HdrOther; h++ {
+		if len(h.String()) == 0 || strings.EqualFold(h.String(), "invalid") {
+			t.Errorf("header type %d has invalid string value %q\n",
+				h, h.String())
+		}
+	}
+
 }
 
 type eRes struct {

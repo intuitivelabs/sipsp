@@ -65,8 +65,6 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, EventTy
 		// retransmission
 		goto retr
 	}
-	e.CSeq[dir] = mcseq
-	e.ReqsNo[dir]++
 	switch mmethod {
 	case sipsp.MBye:
 		newState = CallStBye
@@ -81,10 +79,22 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, EventTy
 			newState = prevState // ignore CANCEL, keep old state
 		}
 	default:
-		// INVITE, ACK or non-INVITE
+		// INVITE, ACK or non-INVITE in-dialog
 		if mhastotag {
 			switch prevState {
-			case CallStInit, CallStFInv, CallStEarlyDlg:
+			case CallStInit:
+				switch mmethod {
+				case sipsp.MInvite:
+					// missed first invite
+					newState = CallStEstablished
+					event = EvCallStart
+				case sipsp.MAck:
+					// we don't know the ACK type
+					newState = prevState // keep state for ack
+				default:
+					newState = CallStFNonInv
+				}
+			case CallStFInv, CallStEarlyDlg:
 				// reply missed somehow, recover...
 				newState = CallStEstablished
 				event = EvCallStart
@@ -115,11 +125,20 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, EventTy
 		}
 	}
 end:
+	e.CSeq[dir] = mcseq
+	e.ReqsNo[dir]++
 	// update state
+	e.prevState = e.State // debugging
 	e.State = newState
+	// add extra event attributes from msg that are not already set
+	e.Info.AddFromMsg(m, dir)
+	event = updateEvent(event, e)
+	if event != EvNone {
+		e.evGen = EvGenReq
+	}
 	return newState, event
 retr: // retransmission or PRACK
-	return prevState, event // do nothing
+	return prevState, EvNone // do nothing
 }
 
 // updateStateRepl() updates the call state in a forgiving maximum
@@ -155,9 +174,6 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, EventT
 		mmethod == sipsp.MUpdate /* ignore UPDATEs */ {
 		goto retr // retransmission
 	}
-	e.ReplCSeq[dir] = mcseq
-	e.ReplStatus[dir] = mstatus
-	e.ReplsNo[dir]++
 	switch mmethod {
 	case sipsp.MCancel:
 		switch prevState {
@@ -264,10 +280,21 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, EventT
 		}
 	}
 	//end:
+	e.ReplCSeq[dir] = mcseq
+	e.ReplStatus[dir] = mstatus
+	e.Info.overwriteAttrField(AttrReason, &m.FL.Reason, m.Buf)
+	e.ReplsNo[dir]++
+	e.prevState = e.State
 	e.State = newState
+	// add extra event attributes from msg that are not already set
+	e.Info.AddFromMsg(m, dir)
+	event = updateEvent(event, e)
+	if event != EvNone {
+		e.evGen = EvGenRepl
+	}
 	return newState, event
 retr: // retransmission, ignore
-	return prevState, event
+	return prevState, EvNone
 }
 
 func updateState(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, EventType) {
@@ -277,22 +304,33 @@ func updateState(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, EventType)
 	return updateStateRepl(e, m, dir)
 }
 
+// reported reason for internal timeouts
+var timeoutReason = []byte("internal: call state timeout")
+
 // finalTimeoutEv() should be called before destroying and expired call entry.
 // It returns the final EventType
 func finalTimeoutEv(e *CallEntry) EventType {
 
+	var forcedStatus uint16
+	var forcedReason *[]byte
 	event := EvNone
 	switch e.State {
 	case CallStFInv: // un-replied INVITE, timeout
 		event = EvCallAttempt
+		forcedStatus = 408
+		forcedReason = &timeoutReason
 	case CallStEarlyDlg: // early dialog timeout
 		event = EvCallAttempt
+		forcedStatus = 408
+		forcedReason = &timeoutReason
 	case CallStEstablished: // call timeout
 		event = EvCallEnd
+		forcedStatus = 408
+		forcedReason = &timeoutReason
 
 	case CallStBye: // call established, BYE sent, but not replied
 		event = EvCallEnd // should've been already generated on BYE
-	case CallStByeReplied: // call properly terminated, final timouet
+	case CallStByeReplied: // call properly terminated, final timeout
 		event = EvCallEnd // should have been already generated
 	case CallStCanceled:
 		event = EvCallAttempt // should've been already generated
@@ -301,7 +339,7 @@ func finalTimeoutEv(e *CallEntry) EventType {
 		if authFailure(e.ReplStatus[0]) || authFailure(e.ReplStatus[1]) {
 			event = EvAuthFailed
 		} else {
-			// we delay this to final timeout to catch
+			// this was delayed to final timeout to catch
 			// possible parallel branches 2xxs
 			event = EvCallAttempt
 		}
@@ -324,6 +362,16 @@ func finalTimeoutEv(e *CallEntry) EventType {
 
 	case CallStInit:
 		// do nothing, should never reach this.
+	}
+	event = updateEvent(event, e)
+	if event != EvNone {
+		if forcedStatus != 0 {
+			e.ReplStatus[0] = forcedStatus
+		}
+		if forcedReason != nil {
+			e.Info.overwriteAttr(AttrReason, *forcedReason)
+		}
+		e.evGen = EvGenTimeout
 	}
 	return event
 }

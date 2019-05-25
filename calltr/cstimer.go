@@ -49,6 +49,13 @@ func csTimerStartUnsafe(cs *CallEntry) bool {
 		// allow for small errors
 		expire := cs.Timer.Expire.Add(-time.Second / 10) // sub sec/10
 		if expire.Before(now) || expire.Equal(now) {
+			ev := EvNone
+			var evd *EventData
+			if cs.evHandler != nil {
+				evd = &EventData{}
+				buf := make([]byte, EventDataMaxBuf())
+				evd.Init(buf)
+			}
 			// if expired remove cs from hash
 			cstHash.HTable[cs.hashNo].Lock()
 			removed := false
@@ -59,10 +66,21 @@ func csTimerStartUnsafe(cs *CallEntry) bool {
 				cstHash.HTable[cs.hashNo].DecStats()
 				atomic.StoreInt32(&cs.Timer.done, 1)
 				removed = true
+				ev = finalTimeoutEv(cs)
+				if ev != EvNone && evd != nil {
+					// event not seen before, report...
+					// fill event data while locked, but process it
+					// once unlocked
+					evd.Fill(ev, cs)
+				}
 			}
 			cstHash.HTable[cs.hashNo].Unlock()
 			// mark timer as dead/done
 			if removed {
+				// call event callback, outside the hash lock
+				if ev != EvNone && evd != nil && cs.evHandler != nil {
+					cs.evHandler(evd)
+				}
 				cs.Unref()
 				return
 			} // else fall-through

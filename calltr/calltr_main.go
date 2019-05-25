@@ -27,22 +27,23 @@ func init() {
 // a request comming from the callee should never happen: even if we see
 // first something like that we wouldn't be able to know who initiated the
 // the dialog and hence the dir).
-func newCallEntry(hashNo, cseq uint32, m *sipsp.PSIPMsg, n *[2]NetInfo, dir int) *CallEntry {
+func newCallEntry(hashNo, cseq uint32, m *sipsp.PSIPMsg, n *[2]NetInfo, dir int, evH HandleEvF) *CallEntry {
 	toTagL := uint(m.PV.To.Tag.Len)
 	if toTagL == 0 { // TODO: < DefaultToTagLen (?)
 		toTagL = DefaultToTagLen
 	}
-	extraSize := uint(m.PV.Callid.CallID.Len) + uint(m.PV.From.Tag.Len) +
+	keySize := uint(m.PV.Callid.CallID.Len) + uint(m.PV.From.Tag.Len) +
 		toTagL
-	if extraSize > MaxTagSpace {
+	if keySize > MaxTagSpace {
 		// TODO: remove log and add some stats ?
 		log.Printf("newCallEntry: callid + tags too big: %d for %s\n",
-			extraSize, m.Buf)
+			keySize, m.Buf)
 		return nil
 	}
-	e := AllocCallEntry(extraSize)
+	infoSize := infoReserveSize(m, dir)
+	e := AllocCallEntry(keySize, infoSize)
 	if e == nil {
-		DBG("newCallEntry: AllocEntry(%d) failed\n", extraSize)
+		DBG("newCallEntry: AllocEntry(%d) failed\n", keySize)
 		return nil
 	}
 	if !e.Key.SetCF(m.PV.Callid.CallID.Get(m.Buf), m.PV.From.Tag.Get(m.Buf),
@@ -50,7 +51,7 @@ func newCallEntry(hashNo, cseq uint32, m *sipsp.PSIPMsg, n *[2]NetInfo, dir int)
 		DBG("newCallEntry SetCF(%q, %q, %d) cidl: %d + ftl: %d  / %d failed\n",
 			m.PV.Callid.CallID.Get(m.Buf), m.PV.From.Tag.Get(m.Buf),
 			toTagL, m.PV.Callid.CallID.Len, m.PV.From.Tag.Len,
-			extraSize)
+			keySize)
 		goto error
 	}
 	if m.PV.To.Tag.Len != 0 {
@@ -60,11 +61,14 @@ func newCallEntry(hashNo, cseq uint32, m *sipsp.PSIPMsg, n *[2]NetInfo, dir int)
 			goto error
 		}
 	}
+	e.Info.AddFromMsg(m, dir)
 	e.State = CallStInit
 	csTimerInitUnsafe(e, time.Duration(e.State.TimeoutS())*time.Second)
 	e.hashNo = hashNo
 	e.CSeq[dir] = cseq
 	e.Method = m.Method()
+	e.evHandler = evH
+	e.CreatedTS = time.Now() // debugging
 	if n != nil {
 		e.EndPoint = *n // FIXME
 	}
@@ -144,7 +148,7 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 	if flags&CallStProcessNoAlloc != 0 {
 		return nil // alloc/fork not allowed, exit
 	}
-	n := newCallEntry(e.hashNo, 0, m, &e.EndPoint, dir)
+	n := newCallEntry(e.hashNo, 0, m, &e.EndPoint, dir, e.evHandler)
 	if n != nil {
 		// TODO:  make sure all the relevant entry data is cloned
 		if dir == 0 {
@@ -154,6 +158,12 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 		}
 		n.ReqsNo[0] = e.ReqsNo[0]
 		n.ReqsNo[1] = e.ReqsNo[1]
+		n.prevState = e.prevState // debugging
+		n.lastEv = e.lastEv       // debugging
+		n.CreatedTS = e.CreatedTS // debugging
+		n.forkedTS = time.Now()   // debugging
+		// not sure about keeping Attrs Reason (?)
+		n.Info.AddFromCi(&e.Info)
 	} else {
 		DBG("forkCallEntry: newCallEntry(...) failed\n")
 	}
@@ -165,8 +175,8 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 // WARNING: the proper hash lock must be already held.
 // It returns true on success and false on failure.
 // If it returns false, e might be no longer valid (if not referenced before).
-func addCallEntryUnsafe(e *CallEntry, m *sipsp.PSIPMsg, dir int) bool {
-	updateState(e, m, dir)
+func addCallEntryUnsafe(e *CallEntry, m *sipsp.PSIPMsg, dir int) (bool, EventType) {
+	_, ev := updateState(e, m, dir)
 	e.Ref() // for the hash
 	cstHash.HTable[e.hashNo].Insert(e)
 	cstHash.HTable[e.hashNo].IncStats()
@@ -175,17 +185,20 @@ func addCallEntryUnsafe(e *CallEntry, m *sipsp.PSIPMsg, dir int) bool {
 		cstHash.HTable[e.hashNo].Rm(e)
 		cstHash.HTable[e.hashNo].DecStats()
 		e.Unref()
-		return false
+		return false, ev
 	}
 	// no ref for the timer
-	return true
+	return true, ev
 }
 
 // ProcessMsg tries to match a sip msg against stored call state.
 // Depending on flags it will update the call state based on msg, create
 // new call entries if needed a.s.o.
 // It returns the matched call entry (if any pre-existing one matches),
-//  and the match type and the match direction.
+//  the match type, the match direction and an event type.
+// It will also fill evd (if not nil) with event data (so that it can
+// be used outside a lock). The EventData structure must be initialised
+// by the caller.
 // WARNING: the returned call entry is referenced. Alway Unref() it after
 // use or memory leaks will happen.
 // Typical usage examples:
@@ -200,14 +213,15 @@ func addCallEntryUnsafe(e *CallEntry, m *sipsp.PSIPMsg, dir int) bool {
 // calle, match, dir = ProcessMsg(sipmsg, CallStProcessUpdate CallStNoAlloc)
 // calle.Unref()
 //
-func ProcessMsg(m *sipsp.PSIPMsg, flags CallStProcessFlags) (*CallEntry, CallMatchType, int) {
+func ProcessMsg(m *sipsp.PSIPMsg, n *[2]NetInfo, f HandleEvF, evd *EventData, flags CallStProcessFlags) (*CallEntry, CallMatchType, int, EventType) {
+	ev := EvNone
 	if !(m.Parsed() &&
 		m.HL.PFlags.AllSet(sipsp.HdrFrom, sipsp.HdrTo,
 			sipsp.HdrCallID, sipsp.HdrCSeq)) {
 		DBG("ProcessMsg: CallErrMatch: "+
 			"message not fully parsed(%v) or missing headers (%0x)\n",
 			m.Parsed(), m.HL.PFlags)
-		return nil, CallErrMatch, 0
+		return nil, CallErrMatch, 0, ev
 	}
 	hashNo := cstHash.Hash(m.Buf,
 		int(m.PV.Callid.CallID.Offs), int(m.PV.Callid.CallID.Len))
@@ -222,13 +236,15 @@ func ProcessMsg(m *sipsp.PSIPMsg, flags CallStProcessFlags) (*CallEntry, CallMat
 	case CallNoMatch:
 		if flags&CallStProcessNew != 0 {
 			// create new call state
-			e = newCallEntry(hashNo, 0, m, nil, 0)
+			e = newCallEntry(hashNo, 0, m, n, 0, f)
 			if e == nil {
 				DBG("ProcessMsg: newCallEntry() failed on NoMatch\n")
 				goto errorLocked
 			}
 			e.Ref()
-			if !addCallEntryUnsafe(e, m, 0) {
+			var ok bool
+			ok, ev = addCallEntryUnsafe(e, m, 0)
+			if !ok {
 				e.Unref()
 				e = nil
 				DBG("ProcessMsg: addCallEntryUnsafe() failed on NoMatch\n")
@@ -259,14 +275,16 @@ func ProcessMsg(m *sipsp.PSIPMsg, flags CallStProcessFlags) (*CallEntry, CallMat
 			case n == e:
 				// in-place update
 				e.Ref() // we return it
-				updateState(e, m, dir)
+				_, ev = updateState(e, m, dir)
 				csTimerUpdateTimeoutUnsafe(e,
 					time.Duration(e.State.TimeoutS())*time.Second)
 			default:
 
 				e = n
 				n.Ref()
-				if !addCallEntryUnsafe(n, m, dir) {
+				var ok bool
+				ok, ev = addCallEntryUnsafe(n, m, dir)
+				if !ok {
 					n.Unref()
 					DBG("ProcessMsg: addCallEntryUnsafe() failed for *Match\n")
 					goto errorLocked
@@ -279,7 +297,7 @@ func ProcessMsg(m *sipsp.PSIPMsg, flags CallStProcessFlags) (*CallEntry, CallMat
 	case CallFullMatch:
 		e.Ref()
 		if flags&CallStProcessUpdate != 0 {
-			updateState(e, m, dir)
+			_, ev = updateState(e, m, dir)
 			csTimerUpdateTimeoutUnsafe(e,
 				time.Duration(e.State.TimeoutS())*time.Second)
 		}
@@ -288,16 +306,31 @@ func ProcessMsg(m *sipsp.PSIPMsg, flags CallStProcessFlags) (*CallEntry, CallMat
 	}
 endLocked:
 	// cstHash.HTable[hashNo].Unlock()
-	return e, match, dir
+	if ev != EvNone && evd != nil {
+		// event not seen before, report...
+		evd.Fill(ev, e)
+	}
+	return e, match, dir, ev
 errorLocked:
 	// cstHash.HTable[hashNo].Unlock()
 	DBG("ProcessMsg: returning CallErrMatch\n")
-	return nil, CallErrMatch, 0
+	return nil, CallErrMatch, 0, EvNone
 }
 
-func Track(m *sipsp.PSIPMsg) bool {
-	e, match, _ := ProcessMsg(m, CallStProcessUpdate|CallStProcessNew)
+func Track(m *sipsp.PSIPMsg, n *[2]NetInfo, f HandleEvF) bool {
+	var evd *EventData
+	if f != nil {
+		var buf = make([]byte, EventDataMaxBuf())
+		evd = &EventData{}
+		evd.Init(buf)
+	}
+
+	e, match, _, ev :=
+		ProcessMsg(m, n, f, evd, CallStProcessUpdate|CallStProcessNew)
 	if e != nil {
+		if match != CallErrMatch && ev != EvNone {
+			f(evd)
+		}
 		e.Unref()
 	}
 	return match != CallErrMatch

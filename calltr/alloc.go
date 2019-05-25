@@ -6,6 +6,8 @@ import (
 	"unsafe"
 )
 
+const AllocRoundTo = 8
+
 type StatCounter uint64
 
 func (c *StatCounter) Inc(v uint) uint64 {
@@ -25,19 +27,20 @@ type AllocStats struct {
 	NewCalls  StatCounter
 	FreeCalls StatCounter
 	Failures  StatCounter
+	Sizes     [1024]StatCounter
 }
 
 var CallEntryAllocStats AllocStats
 
 // AllocCallEtrny allocates a CallEntry and the CalLEntry.Key.buf in one block.
-// The buf will be extraSize bytes length.
+// The Key.buf will be keySize bytes length and info.buf infoSize.
 // It might return nil if the memory limits are exceeded.
-func AllocCallEntry(extraSize uint) *CallEntry {
+func AllocCallEntry(keySize, infoSize uint) *CallEntry {
 	var e CallEntry
 	CallEntryAllocStats.NewCalls.Inc(1)
 	callEntrySize := uint(unsafe.Sizeof(e))
-	totalSize := callEntrySize + extraSize
-	totalSize = ((totalSize-1)/8 + 1) * 8 // round up to next multiple of 8
+	totalSize := callEntrySize + keySize + infoSize
+	totalSize = ((totalSize-1)/AllocRoundTo + 1) * AllocRoundTo // round up
 	// TODO: use multiple of block-size blocks and pools for each block size
 	buf := make([]byte, totalSize) //?allignment (seems to be always ok)
 	/* alternative, forcing allignment, error checking skipped:
@@ -56,8 +59,14 @@ func AllocCallEntry(extraSize uint) *CallEntry {
 	p := unsafe.Pointer(&buf[0])
 	n := (*CallEntry)(p)
 	*n = e
-	n.Key.Init(buf[callEntrySize:])
+	n.Key.Init(buf[callEntrySize:(callEntrySize + keySize)])
+	n.Info.Init(buf[(callEntrySize + keySize):])
 	CallEntryAllocStats.TotalSize.Inc(uint(totalSize))
+	if int(totalSize)/AllocRoundTo < len(CallEntryAllocStats.Sizes) {
+		CallEntryAllocStats.Sizes[totalSize/AllocRoundTo].Inc(1)
+	} else {
+		CallEntryAllocStats.Sizes[len(CallEntryAllocStats.Sizes)-1].Inc(1)
+	}
 	return n
 
 }

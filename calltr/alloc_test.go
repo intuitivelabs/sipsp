@@ -8,14 +8,14 @@ import (
 
 func TestCallStateAlloc(t *testing.T) {
 
-	var e *CallEntry = AllocCallEntry(10)
+	var e *CallEntry = AllocCallEntry(10, 0)
 
 	t.Logf("callstate %p, size %x &buf[0]= %v size %x\n",
 		e, unsafe.Sizeof(*e), &e.Key.buf[0], len(e.Key.buf))
 	i := 0
 	for ; i < 1000000; i++ {
 		sz := uint(rand.Intn(128))
-		e = AllocCallEntry(sz)
+		e = AllocCallEntry(sz, 0)
 		if len(e.Key.buf) < int(sz) {
 			t.Errorf("wrong buf size %d, expected at least %d\n",
 				len(e.Key.buf), sz)

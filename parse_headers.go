@@ -1,11 +1,10 @@
 package sipsp
 
 import (
-	//"fmt"
 	"andrei/sipsp/bytescase"
 )
 
-type HdrT uint
+type HdrT uint16
 
 type HdrFlags uint16
 
@@ -50,27 +49,36 @@ const (
 	HdrCallID
 	HdrCSeq
 	HdrCLen
+	HdrContact
+	HdrExpires
+	HdrUA
 	HdrOther // generic, non recognized header
 )
 
 const (
-	HdrFromF   HdrFlags = 1 << HdrFrom
-	HdrToF     HdrFlags = 1 << HdrTo
-	HdrCallIDF HdrFlags = 1 << HdrCallID
-	HdrCSeqF   HdrFlags = 1 << HdrCSeq
-	HdrCLenF   HdrFlags = 1 << HdrCLen
-	HdrOtherF  HdrFlags = 1 << HdrOther
+	HdrFromF    HdrFlags = 1 << HdrFrom
+	HdrToF      HdrFlags = 1 << HdrTo
+	HdrCallIDF  HdrFlags = 1 << HdrCallID
+	HdrCSeqF    HdrFlags = 1 << HdrCSeq
+	HdrCLenF    HdrFlags = 1 << HdrCLen
+	HdrContactF HdrFlags = 1 << HdrContact
+	HdrExpiresF HdrFlags = 1 << HdrExpires
+	HdrUAF      HdrFlags = 1 << HdrUA
+	HdrOtherF   HdrFlags = 1 << HdrOther
 )
 
 // pretty names for debugging and error reporting
 var hdrTStr = [...]string{
-	HdrNone:   "nil",
-	HdrFrom:   "From",
-	HdrTo:     "To",
-	HdrCallID: "Call-ID",
-	HdrCSeq:   "Cseq",
-	HdrCLen:   "Content-Length",
-	HdrOther:  "Generic",
+	HdrNone:    "nil",
+	HdrFrom:    "From",
+	HdrTo:      "To",
+	HdrCallID:  "Call-ID",
+	HdrCSeq:    "Cseq",
+	HdrCLen:    "Content-Length",
+	HdrContact: "Contact",
+	HdrExpires: "Expires",
+	HdrUA:      "User-Agent",
+	HdrOther:   "Generic",
 }
 
 func (t HdrT) String() string {
@@ -98,6 +106,10 @@ var hdrName2Type = [...]hdr2Type{
 	{n: []byte("cseq"), t: HdrCSeq},
 	{n: []byte("content-length"), t: HdrCLen},
 	{n: []byte("l"), t: HdrCLen},
+	{n: []byte("contact"), t: HdrContact},
+	{n: []byte("m"), t: HdrContact},
+	{n: []byte("expires"), t: HdrExpires},
+	{n: []byte("user-agent"), t: HdrUA},
 }
 
 const (
@@ -114,6 +126,7 @@ func hashHdrName(n []byte) int {
 		mC = (1 << hnBitsFChar) - 1
 		mL = (1 << hnBitsLen) - 1
 	)
+	/* contact & callid will have the same hash, using this method...*/
 	return (int(bytescase.ByteToLower(n[0])) & mC) |
 		((len(n) & mL) << hnBitsFChar)
 }
@@ -149,6 +162,10 @@ func (h *Hdr) Reset() {
 	*h = Hdr{}
 }
 
+func (h *Hdr) Missing() bool {
+	return h.Type == HdrNone
+}
+
 type HdrIState struct {
 	state uint8
 }
@@ -157,6 +174,7 @@ type HdrLst struct {
 	PFlags HdrFlags // parsed headers as flags
 	N      int      // total numbers of headers found (can be > len(Hdrs))
 	Hdrs   []Hdr
+	h      [int(HdrOther) - 1]Hdr // list of type -> hdr
 	HdrLstIState
 }
 
@@ -171,6 +189,22 @@ func (hl *HdrLst) Reset() {
 		hdrs[i].Reset()
 	}
 	hl.Hdrs = hdrs
+}
+
+func (hl *HdrLst) GetHdr(t HdrT) *Hdr {
+	if t > HdrNone && t < HdrOther {
+		return &hl.h[int(t)-1] // no value for HdrNone or HdrOther
+	}
+	return nil
+}
+
+func (hl *HdrLst) SetHdr(newhdr *Hdr) bool {
+	i := int(newhdr.Type) - 1
+	if i >= 0 && i < len(hl.h) && hl.h[i].Missing() {
+		hl.h[i] = *newhdr
+		return true
+	}
+	return false
 }
 
 // PHBodies defines an interface for getting pointer to parsed bodies structs.
@@ -492,6 +526,7 @@ func ParseHeaders(buf []byte, offs int, hl *HdrLst, hb PHBodies) (int, ErrorHdr)
 		switch err {
 		case 0:
 			hl.PFlags.Set(h.Type)
+			hl.SetHdr(h) // save "shortcut"
 			if h == &hl.hdr {
 				hl.hdr.Reset() // prepare it for reuse
 			}

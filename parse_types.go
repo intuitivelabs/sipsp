@@ -13,6 +13,9 @@ type PField struct {
 func (p *PField) Set(start, end int) {
 	p.Offs = OffsT(start)
 	p.Len = OffsT(end - start)
+	if end < start {
+		panic("invalid range")
+	}
 }
 
 // Reset sets a PField to the empty value.
@@ -24,6 +27,9 @@ func (p *PField) Reset() {
 // Extend "grows" a PField to a new end offset.
 func (p *PField) Extend(newEnd int) {
 	p.Len = OffsT(newEnd) - p.Offs
+	if newEnd < int(p.Offs) {
+		panic("invalid end offset")
+	}
 }
 
 func (p PField) Empty() bool {

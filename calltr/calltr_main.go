@@ -106,28 +106,32 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 	case CallCallIDMatch:
 		/* only the callid matches => the from tag must be either updated
 		 	in-place or a new entry must be "forked".
-			Optimization: if the entry received a negative reply, replace it
+			Optimization: if the entry received a negative reply, and the
+			 neg reply is and auth failure, replace it
 			 (if there is enough space).
 			 This also helps in matching requests retransmitted after a
 			 challenge with a different from tag.
+			 CSeq cannot be used, since only the CallID matched and there
+			  is no guarantee the originator will keep increasing the
+			  original CSeq (so no retr. checks possible)
 			Else: create a new entry */
+		// TODO: do it for all neg replies or only for auth failure?
 		totagSpace := int(newToTag.Len)
-		if totagSpace == 0 { // TODO: <= DefaultToTagLen
+		if totagSpace == 0 {
 			totagSpace = DefaultToTagLen
 		}
 		if (e.State == CallStNegReply || e.State == CallStNonInvNegReply) &&
-			e.Key.TagSpace(int(newFromTag.Len), totagSpace) {
+			e.Key.TagSpace(int(newFromTag.Len), totagSpace) &&
+			authFailure(e.ReplStatus[0]) {
 			// enough space to update in-place
 
 			if !e.Key.SetFTag(newFromTag.Get(m.Buf), totagSpace) {
 				log.Printf("forkCallEntry: BUG: unexpected failure\n")
 				return nil
 			}
-			if newToTag.Len != 0 {
-				if !e.Key.SetToTag(newToTag.Get(m.Buf)) {
-					log.Printf("forkCallEntry: BUG: unexpected failure\n")
-					return nil
-				}
+			if !e.Key.SetToTag(newToTag.Get(m.Buf)) {
+				log.Printf("forkCallEntry: BUG: unexpected failure\n")
+				return nil
 			}
 			return e
 		}
@@ -140,9 +144,28 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 				return e
 			}
 			// update failed => not enough space => fallback to fork call entry
+		} else {
+			// else try same replace neg. reply trick as for CallIdMatch
+			// TODO: use CSeq too, e.g. update only if greater CSeq ... ?
+			totagSpace := int(newToTag.Len)
+			if totagSpace == 0 {
+				totagSpace = DefaultToTagLen
+			}
+			if (e.State == CallStNegReply || e.State == CallStNonInvNegReply) &&
+				e.Key.TagSpace(int(newFromTag.Len), totagSpace) &&
+				authFailure(e.ReplStatus[dir]) {
+
+				// check for possible old retransmissions
+				if (m.Request() && !reqRetr(e, m, dir)) ||
+					(!m.Request() && !replRetr(e, m, dir)) {
+					if !e.Key.SetToTag(newToTag.Get(m.Buf)) {
+						log.Printf("forkCallEntry: BUG: partial match to\n")
+						return nil
+					}
+					return e
+				}
+			}
 		}
-		// else try same replace neg. reply trick as for CallIdMatch
-		// TODO: ....
 	}
 	// at this  point try to fork the call entry
 	if flags&CallStProcessNoAlloc != 0 {

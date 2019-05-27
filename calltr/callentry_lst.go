@@ -125,7 +125,8 @@ func (lst *CallEntryLst) ForEachSafeRm(f func(e *CallEntry) bool) {
 // match direction (0 for caller -> callee  and 1 for callee -> caller)
 // It does not use internal locking. Call it between Lock() / Unlock() to
 // be concurency safe.
-func (lst *CallEntryLst) Find(callid, ftag, ttag []byte) (*CallEntry, CallMatchType, int) {
+func (lst *CallEntryLst) Find(callid, ftag, ttag []byte, cseq uint32,
+	status uint16) (*CallEntry, CallMatchType, int) {
 
 	var callidMatch *CallEntry
 	var partialMatch *CallEntry
@@ -137,8 +138,44 @@ func (lst *CallEntryLst) Find(callid, ftag, ttag []byte) (*CallEntry, CallMatchT
 		case CallFullMatch:
 			return e, mt, dir
 		case CallPartialMatch:
-			partialMatch = e
-			partialMDir = dir
+			// TODO: consider CSeq, a final repl. entry with lower CSeq
+			//       might be a better match
+			/*
+				if partialMatch == nil ||
+					authFailure(e.ReplStatus[dir])
+					partialMatch = e
+					partialMDir = dir
+				}
+			*/
+
+			/* if more partialMatches, choose the one that has a
+			   failed auth. If there are more, or there is none with
+			   failed auth, then choose the one with cseq < crt. message.
+			   If there are more, then choose the one with the lowest cseq
+			*/
+			if partialMatch == nil {
+				partialMatch = e
+				partialMDir = dir
+			} else if authFailure(e.ReplStatus[dir]) &&
+				!authFailure(partialMatch.ReplStatus[partialMDir]) {
+				partialMatch = e
+				partialMDir = dir
+			} else if (authFailure(e.ReplStatus[dir]) &&
+				authFailure(partialMatch.ReplStatus[partialMDir])) ||
+				!authFailure(partialMatch.ReplStatus[partialMDir]) {
+				// either both are auth failure or none => used CSeq
+				if cseq > partialMatch.CSeq[partialMDir] &&
+					cseq > e.CSeq[dir] {
+					if e.CSeq[dir] > partialMatch.CSeq[partialMDir] {
+						partialMatch = e
+						partialMDir = dir
+					} // else do nothing, keep partialMatch
+				} else if cseq > e.CSeq[dir] {
+					partialMatch = e
+					partialMDir = dir
+				} // else do nothing, keep partialMatch
+			}
+
 			// continue searching for a possible better match
 		case CallCallIDMatch:
 			/*  some UAs reuse the same CallId with different from
@@ -151,8 +188,15 @@ func (lst *CallEntryLst) Find(callid, ftag, ttag []byte) (*CallEntry, CallMatchT
 			a  different callid (rfc3261: SHOULD have tehe same callid),
 			but we cannot handle this case.
 			*/
-			if callidMatch == nil && e.Key.ToTag.Len == 0 {
+
+			// TODO: consider CSeq, an final repl. entry with lower CSeq
+			//       might be a better match
+			if callidMatch == nil {
 				callidMatch = e // fallback if we don't find something better
+			} else if e.Key.ToTag.Len == 0 {
+				callidMatch = e // an entry with a not set totag is better
+			} else if authFailure(e.ReplStatus[0]) {
+				callidMatch = e // an auth. failure entry is better
 			}
 		case CallNoMatch: // do nothing
 		}

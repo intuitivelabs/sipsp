@@ -231,7 +231,9 @@ func ProcessMsg(m *sipsp.PSIPMsg, n *[2]NetInfo, f HandleEvF, evd *EventData, fl
 
 	e, match, dir := cstHash.HTable[hashNo].Find(m.PV.Callid.CallID.Get(m.Buf),
 		m.PV.From.Tag.Get(m.Buf),
-		m.PV.To.Tag.Get(m.Buf))
+		m.PV.To.Tag.Get(m.Buf),
+		m.PV.CSeq.CSeqNo,
+		m.FL.Status)
 	switch match {
 	case CallNoMatch:
 		if flags&CallStProcessNew != 0 {

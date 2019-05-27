@@ -103,7 +103,7 @@ func (c *CallKey) SetFTag(fromtag []byte, reserve int) bool {
 		return false
 	}
 	copy(c.buf[fTagOffs:], fromtag)
-	c.FromTag.Set(fTagOffs, newFTagLen)
+	c.FromTag.Set(fTagOffs, fTagOffs+newFTagLen)
 	c.ToTag.Set(fTagOffs+newFTagLen, fTagOffs+newFTagLen)
 	return true
 }

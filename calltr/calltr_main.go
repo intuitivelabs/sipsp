@@ -43,7 +43,7 @@ func newCallEntry(hashNo, cseq uint32, m *sipsp.PSIPMsg, n *[2]NetInfo, dir int,
 	infoSize := infoReserveSize(m, dir)
 	e := AllocCallEntry(keySize, infoSize)
 	if e == nil {
-		DBG("newCallEntry: AllocEntry(%d) failed\n", keySize)
+		DBG("newCallEntry: AllocEntry(%d, %d) failed\n", keySize, infoSize)
 		return nil
 	}
 	if !e.Key.SetCF(m.PV.Callid.CallID.Get(m.Buf), m.PV.From.Tag.Get(m.Buf),
@@ -139,6 +139,8 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 	case CallPartialMatch:
 		if e.Key.ToTag.Len == 0 {
 			// update a missing to tag
+			// TODO: use FromTag if dir == 1 ??
+			// e.g. missed 200, received NOTIFY from the other side...
 			if e.Key.SetToTag(newToTag.Get(m.Buf)) {
 				// successfully update
 				return e
@@ -147,6 +149,9 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 		} else {
 			// else try same replace neg. reply trick as for CallIdMatch
 			// TODO: use CSeq too, e.g. update only if greater CSeq ... ?
+			// TODO: use ReplStatus[0] or CallStatus since we don't care
+			//       about in-dialog failures???
+			// TODO: use FromTag if dir == 1 ??
 			totagSpace := int(newToTag.Len)
 			if totagSpace == 0 {
 				totagSpace = DefaultToTagLen

@@ -281,6 +281,7 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, EventT
 	}
 	//end:
 	e.ReplCSeq[dir] = mcseq
+	//? only if newState =! prevState ? (not ignored?)
 	e.ReplStatus[dir] = mstatus
 	e.Info.overwriteAttrField(AttrReason, &m.FL.Reason, m.Buf)
 	e.ReplsNo[dir]++

@@ -56,8 +56,12 @@ func newCallEntry(hashNo, cseq uint32, m *sipsp.PSIPMsg, n *[2]NetInfo, dir int,
 	}
 	if m.PV.To.Tag.Len != 0 {
 		if !e.Key.SetToTag(m.PV.To.Tag.Get(m.Buf)) {
-			DBG("newCallEntry: SetToTag(%q) failed\n",
-				m.PV.To.Tag.Get(m.Buf))
+			DBG("newCallEntry: SetToTag(%q [%d:%d]) failed: keySize: %d"+
+				"  cid %d:%d ft %d:%d (infoSize %d)",
+				m.PV.To.Tag.Get(m.Buf), m.PV.To.Tag.Offs, toTagL, keySize,
+				m.PV.Callid.CallID.Offs, m.PV.Callid.CallID.Len,
+				m.PV.From.Tag.Offs, m.PV.From.Tag.Len,
+				infoSize)
 			goto error
 		}
 	}
@@ -145,6 +149,8 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 				// successfully update
 				return e
 			}
+			DBG("forkCallEntry: CallPartialMatch: SetToTag(%q) failed\n",
+				newToTag.Get(m.Buf))
 			// update failed => not enough space => fallback to fork call entry
 		} else {
 			// else try same replace neg. reply trick as for CallIdMatch

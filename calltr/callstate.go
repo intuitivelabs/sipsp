@@ -69,6 +69,9 @@ func (c *CallKey) SetCF(callid, fromtag []byte, reserve int) bool {
 	maxl := len(c.buf)
 	callidLen := len(callid)
 	fromtagLen := len(fromtag)
+	if fromtagLen == 0 {
+		fromtagLen = DefaultToTagLen
+	}
 	if callidLen+fromtagLen+reserve > maxl {
 		DBG("SetCF(l:%d, l:%d, %d) failed max len %d\n",
 			callidLen, fromtagLen, reserve, maxl)
@@ -77,8 +80,8 @@ func (c *CallKey) SetCF(callid, fromtag []byte, reserve int) bool {
 	copy(c.buf[:], callid)
 	c.CallID.Set(0, callidLen)
 	copy(c.buf[callidLen:], fromtag)
-	c.FromTag.Set(callidLen, callidLen+fromtagLen)
-	c.ToTag.Set(callidLen+fromtagLen, callidLen+fromtagLen)
+	c.FromTag.Set(callidLen, callidLen+len(fromtag))
+	c.ToTag.Set(callidLen+len(fromtag), callidLen+len(fromtag))
 	return true
 }
 
@@ -99,12 +102,15 @@ func (c *CallKey) TagSpace(fTagLen, tTagLen int) bool {
 func (c *CallKey) SetFTag(fromtag []byte, reserve int) bool {
 	fTagOffs := (int)(c.CallID.Offs + c.CallID.Len)
 	newFTagLen := len(fromtag)
+	if newFTagLen == 0 {
+		newFTagLen = DefaultToTagLen
+	}
 	if c.TagSpace(newFTagLen, reserve) == false {
 		return false
 	}
 	copy(c.buf[fTagOffs:], fromtag)
-	c.FromTag.Set(fTagOffs, fTagOffs+newFTagLen)
-	c.ToTag.Set(fTagOffs+newFTagLen, fTagOffs+newFTagLen)
+	c.FromTag.Set(fTagOffs, fTagOffs+len(fromtag))
+	c.ToTag.Set(fTagOffs+len(fromtag), fTagOffs+len(fromtag))
 	return true
 }
 
@@ -121,10 +127,17 @@ func (c *CallKey) SetToTag(totag []byte) bool {
 	callidLen := int(c.CallID.Len)
 	fromtagLen := int(c.FromTag.Len)
 	totagLen := len(totag)
-	if callidLen == 0 || fromtagLen == 0 {
+	// allow empty fromtag (consider it equivalent to fromtag="")
+	if callidLen == 0 /*|| fromtagLen == 0*/ {
+		DBG("CallKey: SetToTag (%d bytes): empty callid(%d),  fromtag: %d\n",
+			totagLen, callidLen, fromtagLen)
 		return false
 	}
 	if callidLen+fromtagLen+totagLen > maxl {
+		DBG("CallKey: SetToTag (%d bytes): key exceeds maximum (%d/%d):"+
+			" callid(%d) or fromtag(%d)\n",
+			totagLen, maxl, callidLen+fromtagLen+totagLen,
+			callidLen, fromtagLen)
 		return false
 	}
 	copy(c.buf[callidLen+fromtagLen:], totag)

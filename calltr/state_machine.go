@@ -2,7 +2,10 @@ package calltr
 
 import (
 	"andrei/sipsp"
+	"andrei/sipsp/bytescase"
 )
+
+type TimeoutS uint32
 
 // return true if this looks like a request retr.
 func reqRetr(e *CallEntry, m *sipsp.PSIPMsg, dir int) bool {
@@ -49,10 +52,11 @@ func replRetr(e *CallEntry, m *sipsp.PSIPMsg, dir int) bool {
 // 1 for requests from the callee and replies from the caller (totag matches
 // fromtag).
 // See also updateStateRepl().
-// It returns the cuurent, updtead CallState and a EventType
+// It returns the cuurent, updated CallState, the corresponding timeout and
+// an EventType
 // The EventType is not checked for uniqueness (e.g. several call-start could
 // be generated one-after-another if several 2xx arrive)
-func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, EventType) {
+func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, TimeoutS, EventType) {
 	mmethod := m.FL.MethodNo
 	mcseq := m.PV.CSeq.CSeqNo
 	mhastotag := !m.PV.To.Tag.Empty()
@@ -136,9 +140,9 @@ end:
 	if event != EvNone {
 		e.evGen = EvGenReq
 	}
-	return newState, event
+	return newState, TimeoutS(newState.TimeoutS()), event
 retr: // retransmission or PRACK
-	return prevState, EvNone // do nothing
+	return prevState, TimeoutS(newState.TimeoutS()), EvNone // do nothing
 }
 
 // updateStateRepl() updates the call state in a forgiving maximum
@@ -152,12 +156,14 @@ retr: // retransmission or PRACK
 // 1 for requests from the callee and replies from the caller (totag matches
 // fromtag).
 // See also updateStateReq().
-// It returns the cuurent, updtead CallState and a EventType.
+// It returns the current, updtead CallState, a timeout and an EventType.
 // The EventType is not checked for uniqueness (e.g. several call-start could
 // be generated one-after-another if several 2xx arrive)
 // TODO: event support for REGISTER (full with deletions and expires) and
 //      SUBSCRIBE/NOTIFY (requires extra parsing)
-func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, EventType) {
+// TODO: REG timeout = Max Expires, or if bad value 3600 (rfc3261) ??
+func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, TimeoutS, EventType) {
+	var to TimeoutS
 	mstatus := m.FL.Status
 	mmethod := m.PV.CSeq.MethodNo
 	mcseq := m.PV.CSeq.CSeqNo
@@ -243,9 +249,19 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, EventT
 				} else {
 					newState = CallStNonInvFinished
 					if mmethod == sipsp.MRegister {
+						// reply to REGISTER without seen the request
 						event = EvRegNew
-						// TODO: look for contact and expires == 0, it might
-						//       be in fact an EvRegDel
+						exp, _ := m.PV.MaxExpires()
+						to = TimeoutS(exp)
+						// if to == 0 it is either set explicitly to 0
+						// in the REGISTER or no Expires or Contact headers
+						// are present, in both case => delete
+						// note however that a REGISTER with a 0 expire
+						// contact is highly improbable.
+						if to == 0 {
+							// 0 timeout => it's a delete
+							event = EvRegDel
+						}
 					}
 				}
 			case CallStNegReply:
@@ -264,8 +280,32 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, EventT
 				newState = CallStNonInvFinished
 				if mmethod == sipsp.MRegister {
 					event = EvRegNew
-					// TODO: look for contact and expires == 0, it might
-					//       be in fact an EvRegDel
+					// TODO: if not all Contacts parsed, parse manually
+					//       REGISTER contacts
+					savedC := e.Info.Attrs[AttrContact].Get(e.Info.buf)
+					if len(savedC) == 0 {
+						// no contact in the request
+						// it's either a "ping" REGISTER or the call-entry
+						// was created from a REG reply w/ no contact (?)
+						// in either case we generate no event
+						event = EvNone
+					} else if len(savedC) == 1 && savedC[0] == '*' {
+						// "*" contact - consider a reply the delete
+						//  confirmation
+						event = EvRegDel
+						to = 0
+					} else if found, hasExp, exp := msgMatchContact(m, savedC); found {
+						if hasExp && exp == 0 {
+							// contact with 0 expire
+							event = EvRegDel
+							to = 0
+						} else {
+							to = TimeoutS(exp)
+						}
+					} else { // not found
+						event = EvRegDel
+						to = 0
+					}
 				}
 			default:
 				newState = prevState // keep the current state
@@ -293,12 +333,16 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, EventT
 	if event != EvNone {
 		e.evGen = EvGenRepl
 	}
-	return newState, event
+	if to == 0 {
+		to = TimeoutS(newState.TimeoutS())
+	}
+	return newState, to, event
 retr: // retransmission, ignore
-	return prevState, EvNone
+	to = TimeoutS(prevState.TimeoutS())
+	return prevState, to, EvNone
 }
 
-func updateState(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, EventType) {
+func updateState(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, TimeoutS, EventType) {
 	if m.FL.Request() {
 		return updateStateReq(e, m, dir)
 	}
@@ -357,7 +401,7 @@ func finalTimeoutEv(e *CallEntry) EventType {
 		}
 		// else if REGISTER, like above, do nothing
 	case CallStNonInvFinished:
-		if e.Method == sipsp.MRegister {
+		if e.Method == sipsp.MRegister && !e.EvFlags.Test(EvRegDel) {
 			event = EvRegExpired
 		}
 
@@ -375,4 +419,67 @@ func finalTimeoutEv(e *CallEntry) EventType {
 		e.evGen = EvGenTimeout
 	}
 	return event
+}
+
+// if m contains c, it return true,  expire_present and corresp. expire value
+// else false, false, 0
+func msgMatchContact(m *sipsp.PSIPMsg, c []byte) (bool, bool, uint32) {
+	if !m.PV.Contacts.Parsed() || m.PV.Contacts.N == 0 || len(c) == 0 {
+		// no contacts
+		return false, false, 0
+	}
+
+	found := false
+	var exp uint32
+	hasExp := false
+	// TODO: handle more contacts?
+	// For now compare the contacts returned in
+	//       the reply with the 1st contact in the
+	//       original REGISTER
+	mCNo := m.PV.Contacts.VNo()
+	var pCuri sipsp.PsipURI
+	err1, _ := sipsp.ParseURI(c, &pCuri)
+
+	for n := 0; n < mCNo; n++ {
+		var mPCuri sipsp.PsipURI
+		mCuri := m.PV.Contacts.Vals[n].URI.Get(m.Buf)
+		err2, _ := sipsp.ParseURI(mCuri, &mPCuri)
+		if (err1 == 0 && err2 == 0 &&
+			sipsp.URICmpShort(&pCuri, c, &mPCuri, m.Buf)) ||
+			// fallback to normal string compare if unparsable uris:
+			(err1 != 0 && err2 != 0 && bytescase.CmpEq(mCuri, c)) {
+			// match
+			found = true
+			exp = m.PV.Contacts.Vals[n].Expires
+			hasExp = m.PV.Contacts.Vals[n].HasExpires
+			if !hasExp {
+				if m.PV.Expires.Parsed() {
+					exp = m.PV.Expires.UIVal
+					hasExp = true
+				}
+			}
+			break // from for
+		}
+	}
+	// If the contact not found in contact list there are 2
+	// possibilities: either it does not exists =>
+	// deleted or it did not fit in the contact list
+	// (e.g. VNo() < N -> N-VNo() missing contacts)
+	if !found {
+		if m.PV.Contacts.VNo() <= m.PV.Contacts.N {
+			// really missing
+			exp = 0
+		} else {
+			// TODO:
+			// it might be present but we didn't parse it
+			// try to parsing m.PV.Contacts.LastVal
+			// if not found iterare on all headers looking for
+			// contact
+			// or try to re-parse the whole message if Contacts.HNo > 1
+			// with enough contact space?
+			// e.g.: newmsg.Init(...make([]PFromBody, m.PV.Contacts.N)) ...
+			// other wise ParseAllContacts Contacs.LastVal ?
+		}
+	}
+	return found, hasExp, exp
 }

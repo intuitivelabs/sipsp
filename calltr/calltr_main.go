@@ -46,6 +46,8 @@ func newCallEntry(hashNo, cseq uint32, m *sipsp.PSIPMsg, n *[2]NetInfo, dir int,
 		DBG("newCallEntry: AllocEntry(%d, %d) failed\n", keySize, infoSize)
 		return nil
 	}
+	// TODO: if dir == 1 (e.g. fork on partial match from the other side)
+	// we should reverse the tags -- CHECK
 	if !e.Key.SetCF(m.PV.Callid.CallID.Get(m.Buf), m.PV.From.Tag.Get(m.Buf),
 		int(toTagL)) {
 		DBG("newCallEntry SetCF(%q, %q, %d) cidl: %d + ftl: %d  / %d failed\n",
@@ -152,6 +154,12 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 			DBG("forkCallEntry: CallPartialMatch: SetToTag(%q) failed\n",
 				newToTag.Get(m.Buf))
 			// update failed => not enough space => fallback to fork call entry
+
+			// TODO: else if REGISTER call entry and m is reply and
+			//     m.CSeq > e.CSeq[dir] && enough space && ?is2xx(m)?
+			//       =>update in-place
+			//    if m is request & m is REGISTER &&  m.CSeq > e.CSeq[dir]
+			//    ??? update to-tag?, ignore?
 		} else {
 			// else try same replace neg. reply trick as for CallIdMatch
 			// TODO: use CSeq too, e.g. update only if greater CSeq ... ?
@@ -210,11 +218,11 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 // It returns true on success and false on failure.
 // If it returns false, e might be no longer valid (if not referenced before).
 func addCallEntryUnsafe(e *CallEntry, m *sipsp.PSIPMsg, dir int) (bool, EventType) {
-	_, ev := updateState(e, m, dir)
+	_, to, ev := updateState(e, m, dir)
 	e.Ref() // for the hash
 	cstHash.HTable[e.hashNo].Insert(e)
 	cstHash.HTable[e.hashNo].IncStats()
-	csTimerInitUnsafe(e, time.Duration(e.State.TimeoutS())*time.Second)
+	csTimerInitUnsafe(e, time.Duration(to)*time.Second)
 	if !csTimerStartUnsafe(e) {
 		cstHash.HTable[e.hashNo].Rm(e)
 		cstHash.HTable[e.hashNo].DecStats()
@@ -248,6 +256,7 @@ func addCallEntryUnsafe(e *CallEntry, m *sipsp.PSIPMsg, dir int) (bool, EventTyp
 // calle.Unref()
 //
 func ProcessMsg(m *sipsp.PSIPMsg, n *[2]NetInfo, f HandleEvF, evd *EventData, flags CallStProcessFlags) (*CallEntry, CallMatchType, int, EventType) {
+	var to TimeoutS
 	ev := EvNone
 	if !(m.Parsed() &&
 		m.HL.PFlags.AllSet(sipsp.HdrFrom, sipsp.HdrTo,
@@ -311,9 +320,9 @@ func ProcessMsg(m *sipsp.PSIPMsg, n *[2]NetInfo, f HandleEvF, evd *EventData, fl
 			case n == e:
 				// in-place update
 				e.Ref() // we return it
-				_, ev = updateState(e, m, dir)
+				_, to, ev = updateState(e, m, dir)
 				csTimerUpdateTimeoutUnsafe(e,
-					time.Duration(e.State.TimeoutS())*time.Second)
+					time.Duration(to)*time.Second)
 			default:
 
 				e = n
@@ -333,9 +342,9 @@ func ProcessMsg(m *sipsp.PSIPMsg, n *[2]NetInfo, f HandleEvF, evd *EventData, fl
 	case CallFullMatch:
 		e.Ref()
 		if flags&CallStProcessUpdate != 0 {
-			_, ev = updateState(e, m, dir)
+			_, to, ev = updateState(e, m, dir)
 			csTimerUpdateTimeoutUnsafe(e,
-				time.Duration(e.State.TimeoutS())*time.Second)
+				time.Duration(to)*time.Second)
 		}
 	default:
 		log.Panicf("calltr.ProcessMsg: unexpected match type %d\n", match)

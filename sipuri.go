@@ -2,7 +2,10 @@ package sipsp
 
 import (
 	//	"errors"
+	"bytes"
 	"fmt"
+
+	"andrei/sipsp/bytescase"
 )
 
 // TODO: unit test
@@ -81,6 +84,38 @@ type PsipURI struct {
 	Params  PField
 	Headers PField
 	PortNo  uint16
+}
+
+func (u *PsipURI) Reset() {
+	*u = PsipURI{}
+}
+
+// Shortened returns a "short" uri form, good for comparisons.
+// no parameters or headers are included
+func (u *PsipURI) Shortened() PField {
+	var r PField
+
+	if u.Port.Len > 0 {
+		r.Set(int(u.Scheme.Offs), int(u.Port.Offs+u.Port.Len))
+	} else if u.Host.Len > 0 {
+		r.Set(int(u.Scheme.Offs), int(u.Host.Offs+u.Host.Len))
+	} else if u.User.Len > 0 {
+		r.Set(int(u.Scheme.Offs), int(u.User.Offs+u.User.Len))
+	}
+	return r
+}
+
+// CmpShort compares 2 "shortened" uris (up to port, not including parameters
+// or headers).
+// Note that this is not a proper URI comparison (acccording to RFC3261 the
+// common parameters must match, user, ttl, method and maddr must either appear
+// in both URIs or in none and any present header must appear in both URIs to
+// match).
+func URICmpShort(u1 *PsipURI, buf1 []byte, u2 *PsipURI, buf2 []byte) bool {
+	return u1.URIType == u2.URIType && u1.PortNo == u2.PortNo &&
+		bytes.Equal(u1.User.Get(buf1), u2.User.Get(buf2)) &&
+		bytes.Equal(u1.Pass.Get(buf1), u2.Pass.Get(buf2)) &&
+		bytescase.CmpEq(u1.Host.Get(buf1), u2.Host.Get(buf2))
 }
 
 // Parse parses a sip uri into a PSIPUri structure.

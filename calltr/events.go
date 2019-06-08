@@ -26,7 +26,7 @@ const (
 )
 
 var evTypeName = [EvBad + 1]string{
-	EvNone:        "<empty>",
+	EvNone:        "empty",
 	EvCallStart:   "call-start",
 	EvCallEnd:     "call-end",
 	EvCallAttempt: "call-attempt",

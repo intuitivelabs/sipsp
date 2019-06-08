@@ -4,30 +4,30 @@ package sipsp
 const MaxCLenValueSize = 9
 const MaxClenValue = 1 << 24 // numeric max.
 
-type PCLenBody struct {
-	Len  uint32
-	CLen PField
-	PCLenIState
+type PUIntBody struct {
+	UIVal uint32
+	SVal  PField
+	PUIntIState
 }
 
-func (cl *PCLenBody) Reset() {
-	*cl = PCLenBody{}
+func (cl *PUIntBody) Reset() {
+	*cl = PUIntBody{}
 }
 
-func (cl PCLenBody) Empty() bool {
+func (cl PUIntBody) Empty() bool {
 	return cl.state == clInit
 }
 
-func (cl PCLenBody) Parsed() bool {
+func (cl PUIntBody) Parsed() bool {
 	return cl.state == clFIN
 }
 
-func (cl PCLenBody) Pending() bool {
+func (cl PUIntBody) Pending() bool {
 	return cl.state != clFIN && cl.state != clInit
 }
 
-// PCLenIState contains ParseCLenVal internal state info (private).
-type PCLenIState struct {
+// PUintIState contains ParseUIntVal internal state info (private).
+type PUIntIState struct {
 	state uint8 // internal state
 	soffs int   // saved internal offset
 }
@@ -40,7 +40,17 @@ const (
 	clFIN
 )
 
-// ParseCLenVal parses the value/content of a Content-Length header.
+func ParseCLenVal(buf []byte, offs int, pcl *PUIntBody) (int, ErrorHdr) {
+	o, err := ParseUIntVal(buf, offs, pcl)
+	if err == 0 &&
+		(pcl.SVal.Len > MaxCLenValueSize || pcl.UIVal > MaxClenValue) {
+		return int(pcl.SVal.Offs), ErrHdrNumTooBig
+	}
+	return o, err
+}
+
+// ParseUintVal parses the value/content of a header containing an uint
+// (e.g. Content-Length, Expires)
 // The parameters are: a message buffer, the offset in the buffer where the
 // from: (or to:) value starts (should point after the ':') and a pointer
 // to a from value structure that will be filled.
@@ -50,7 +60,7 @@ const (
 //  ErrHdrMoreBytes will be returned and this function can be called again
 // when more bytes are available, with the same buffer, the returned
 // offset ("continue point") and the same pfrom structure.
-func ParseCLenVal(buf []byte, offs int, pcl *PCLenBody) (int, ErrorHdr) {
+func ParseUIntVal(buf []byte, offs int, pcl *PUIntBody) (int, ErrorHdr) {
 
 	if pcl.state == clFIN {
 		// called again after finishing
@@ -65,7 +75,7 @@ func ParseCLenVal(buf []byte, offs int, pcl *PCLenBody) (int, ErrorHdr) {
 		case ' ', '\t', '\n', '\r':
 			switch pcl.state {
 			case clFound:
-				pcl.CLen.Set(pcl.soffs, i)
+				pcl.SVal.Set(pcl.soffs, i)
 				pcl.state = clEnd
 				fallthrough
 			case clInit, clEnd:
@@ -90,14 +100,14 @@ func ParseCLenVal(buf []byte, offs int, pcl *PCLenBody) (int, ErrorHdr) {
 			case clInit:
 				pcl.state = clFound
 				pcl.soffs = i
-				pcl.Len = uint32(c - '0')
+				pcl.UIVal = uint32(c - '0')
 			case clFound:
-				v := pcl.Len*10 + uint32(c-'0')
-				if pcl.Len > v {
+				v := pcl.UIVal*10 + uint32(c-'0')
+				if pcl.UIVal > v {
 					// overflow
 					return i, ErrHdrNumTooBig
 				}
-				pcl.Len = v
+				pcl.UIVal = v
 			case clEnd:
 				// error, stuff found after callid end (WS in callid ?)
 				return i, ErrHdrBadChar
@@ -122,7 +132,7 @@ endOfHdr:
 		// do nothing
 	case clFound:
 		// start found => callid is terminated by CRLF
-		pcl.CLen.Set(pcl.soffs, i)
+		pcl.SVal.Set(pcl.soffs, i)
 	case clInit:
 		// empty callid
 		return n + crl, ErrHdrBad
@@ -130,9 +140,6 @@ endOfHdr:
 		return n + crl, ErrHdrBug
 	}
 	pcl.state = clFIN
-	if pcl.CLen.Len > MaxCLenValueSize || pcl.Len > MaxClenValue {
-		return /*n + crl*/ int(pcl.CLen.Offs), ErrHdrNumTooBig
-	}
 	pcl.soffs = 0
 	return n + crl, 0
 }

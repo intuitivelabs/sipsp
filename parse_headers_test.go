@@ -109,8 +109,8 @@ type testCase struct {
 }
 
 var testsHeaders = [...]testCase{
-	{n: "From", b: "foo@test.org", eRes: eRes{err: 0, t: HdrFrom}},
-	{n: "f", b: "foo@test.org", eRes: eRes{err: 0, t: HdrFrom}},
+	{n: "From", b: "sip:foo@test.org", eRes: eRes{err: 0, t: HdrFrom}},
+	{n: "f", b: "sip:foo@test.org", eRes: eRes{err: 0, t: HdrFrom}},
 	{n: "t", b: "Foo Bar <x@bar.com>;tag=1",
 		eRes: eRes{err: 0, t: HdrTo}},
 	{n: "To", b: "<x@bar.com>;tag=1234;x=y",
@@ -120,6 +120,11 @@ var testsHeaders = [...]testCase{
 	{n: "Cseq", b: "12345 INVITE", eRes: eRes{err: 0, t: HdrCSeq}},
 	{n: "Content-Length", b: "12345", eRes: eRes{err: 0, t: HdrCLen}},
 	{n: "L", b: "0", eRes: eRes{err: 0, t: HdrCLen}},
+	{n: "Contact", b: "<sip:c1@a.b>;expires=60;q=1.0",
+		eRes: eRes{err: 0, t: HdrContact}},
+	{n: "Contact", b: "<sip:c1@a.b>;expires=60,Foo Bar <sip:test.org>,sip:a.b:5060,sip:c:pwd@x.org;expires=10;q=0.56",
+		eRes: eRes{err: 0, t: HdrContact}},
+	{n: "Expires", b: "3600", eRes: eRes{err: 0, t: HdrExpires}},
 	{n: "Foo", b: "generic header", eRes: eRes{err: 0, t: HdrOther}},
 }
 
@@ -170,8 +175,8 @@ func testParseHdrLine(t *testing.T, buf []byte, offs int, hdr *Hdr, phb PHBodies
 	o := offs
 	o, err = ParseHdrLine(buf, o, hdr, phb)
 	if err != e.err {
-		t.Errorf("ParseHdrLine(%q, %d, ..)=[%d, %d(%q)]  error %s (%q) expected, state %d",
-			buf, offs, o, err, err, e.err, e.err, hdr.state)
+		t.Errorf("ParseHdrLine(%q, %d, ..)=[%d, %d(%q)]  error %s (%q) expected, state %d, hdr %q arround %q",
+			buf, offs, o, err, err, e.err, e.err, hdr.state, hdr.Type, buf[o:])
 	}
 	if o != e.offs {
 		t.Errorf("ParseHdrLine(%q, %d, ..)=[%d, %d(%q)]  offset %d expected, state %d",
@@ -200,6 +205,11 @@ func testParseHdrLinePieces(t *testing.T, buf []byte, offs int, e *eRes, n int) 
 	var hdr Hdr
 	var phvals PHdrVals
 	o := offs
+	// use a random number of contact bufs
+	cbufs := rand.Intn(3)
+	if cbufs != 0 {
+		phvals.Init(make([]PFromBody, cbufs))
+	}
 	pieces := rand.Intn(n)
 	for i := 0; i < pieces; i++ {
 		sz := rand.Intn(len(buf) + 1 - o)
@@ -243,9 +253,11 @@ Call-ID: a84b4c76e66710\r
 CSeq: 314159 INVITE\r
 Via: SIP/2.0/UDP 1.2.3.4;branch=z9hG4bKnashds8\r
 Max-Forwards: 70\r
+Contact: *
+Expires: 0
 Date: Thu, 21 Feb 2002 13:02:03 GMT\r
 Content-Length: 568\r
-`, n: 8},
+`, n: 10},
 		{m: `From: <b@foo.bar>;tag=1234\r
 To:<x@y.com>\r
 Call-ID: a84b4c76e66710\r
@@ -255,8 +267,11 @@ CSeq: 914159 CANCEL\r
 Via: SIP/2.0/UDP 1.2.3.4;branch=z9hG4bKnashds8\r
 Max-Forwards: 70\r
 Date: Thu, 21 Feb 2002 13:02:03 GMT\r
+Contact: sip:a@foo.bar:5060,"A B" <sip:ab@x.y>;expires=60,\r
+ <sip:foo.bar>;q=0.9\r
+Expires: 300 \r
 Content-Length: 568\r
-`, n: 10},
+`, n: 12},
 	}
 	var hl HdrLst
 	var hdrs [20]Hdr

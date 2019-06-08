@@ -67,7 +67,7 @@ func TestParseCLenVal(t *testing.T) {
 func testParseCLenExp(t *testing.T, buf []byte, offs int, eErr ErrorHdr,
 	eCLen []byte, eOffs int, eVal uint32) {
 
-	var pcl PCLenBody
+	var pcl PUIntBody
 
 	var sz int
 	var o int
@@ -109,14 +109,14 @@ func testParseCLenExp(t *testing.T, buf []byte, offs int, eErr ErrorHdr,
 			buf, offs, o, err, err, eOffs, pcl.state, pcl.soffs)
 	}
 	// take whitespace into account
-	if !bytes.Equal(eCLen, pcl.CLen.Get(buf)) {
+	if !bytes.Equal(eCLen, pcl.SVal.Get(buf)) {
 		t.Errorf("ParseClenVal(%q, %d, ..)=[%d, %d(%q)] clen %q != %q (exp)",
-			buf, offs, o, err, err, pcl.CLen.Get(buf), eCLen)
+			buf, offs, o, err, err, pcl.SVal.Get(buf), eCLen)
 	}
-	if pcl.Len != eVal {
+	if pcl.UIVal != eVal {
 		t.Errorf("ParseClenVal(%q, %d, ..)=[%d, %d(%q)] clen val %d != %d"+
 			" (exp)",
-			buf, offs, o, err, err, pcl.Len, eVal)
+			buf, offs, o, err, err, pcl.UIVal, eVal)
 	}
 	if !pcl.Parsed() {
 		t.Errorf("ParseClenVal(%q, %d, ..)=[%d, %d(%q)] "+

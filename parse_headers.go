@@ -223,6 +223,7 @@ type PHBodies interface {
 	GetCSeq() *PCSeqBody
 	GetCLen() *PUIntBody
 	GetContacts() *PContacts
+	GetExpires() *PUIntBody
 	Reset()
 }
 
@@ -235,6 +236,7 @@ type PHdrVals struct {
 	CSeq     PCSeqBody
 	CLen     PUIntBody
 	Contacts PContacts
+	Expires  PUIntBody
 }
 
 func (hv *PHdrVals) Reset() {
@@ -244,6 +246,7 @@ func (hv *PHdrVals) Reset() {
 	hv.CSeq.Reset()
 	hv.CLen.Reset()
 	hv.Contacts.Reset()
+	hv.Expires.Reset()
 }
 
 func (hv *PHdrVals) Init(contactsbuf []PFromBody) {
@@ -267,12 +270,35 @@ func (hv *PHdrVals) GetCallID() *PCallIDBody {
 	return &hv.Callid
 }
 
-func (hv *PHdrVals) GetCLen() *PCLenBody {
+func (hv *PHdrVals) GetCLen() *PUIntBody {
 	return &hv.CLen
 }
 
 func (hv *PHdrVals) GetContacts() *PContacts {
 	return &hv.Contacts
+}
+
+func (hv *PHdrVals) GetExpires() *PUIntBody {
+	return &hv.Expires
+}
+
+// MaxExpires() returns the maximum expires time between all the contacts
+// and a possible Expire header.
+// If neither Contact: or Expire: header are present, it will return 0, false.
+func (hv *PHdrVals) MaxExpires() (uint32, bool) {
+	var max uint32
+	var ok bool
+	if hv.Contacts.Parsed() {
+		max = hv.Contacts.MaxExpires
+		ok = true
+	}
+	if hv.Expires.Parsed() {
+		if max < hv.Expires.UIVal {
+			max = hv.Expires.UIVal
+		}
+		ok = true
+	}
+	return max, ok
 }
 
 // ParseHdrLine parses a header from a SIP message.
@@ -305,6 +331,7 @@ func ParseHdrLine(buf []byte, offs int, h *Hdr, hb PHBodies) (int, ErrorHdr) {
 		hCSeq
 		hCLen
 		hContact
+		hExpires
 		hFIN
 	)
 
@@ -368,6 +395,12 @@ func ParseHdrLine(buf []byte, offs int, h *Hdr, hb PHBodies) (int, ErrorHdr) {
 						h.Val = contacts.LastHVal
 					}
 				}
+			case HdrExpires:
+				if expb := hb.GetExpires(); expb != nil && !expb.Parsed() {
+					h.state = hExpires
+					n, err = ParseExpiresVal(buf, o, expb)
+					if err == 0 { /* fix hdr.Val */
+						h.Val = expb.SVal
 					}
 				}
 			}
@@ -528,7 +561,7 @@ func ParseHdrLine(buf []byte, offs int, h *Hdr, hb PHBodies) (int, ErrorHdr) {
 			clenb := hb.GetCLen()
 			n, err := ParseCLenVal(buf, i, clenb)
 			if err == 0 { /* fix hdr.Val */
-				h.Val = clenb.CLen
+				h.Val = clenb.SVal
 				h.state = hFIN
 			}
 			return n, err
@@ -540,6 +573,11 @@ func ParseHdrLine(buf []byte, offs int, h *Hdr, hb PHBodies) (int, ErrorHdr) {
 				h.state = hFIN
 			}
 			return n, err
+		case hExpires: // continue expires parsing
+			expb := hb.GetExpires()
+			n, err := ParseExpiresVal(buf, i, expb)
+			if err == 0 { /* fix hdr.Val */
+				h.Val = expb.SVal
 				h.state = hFIN
 			}
 			return n, err

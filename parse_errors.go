@@ -19,6 +19,8 @@ const (
 	ErrHdrBadChar
 	ErrHdrParams
 	ErrHdrBad
+	ErrHdrValNotNumber
+	ErrHdrValTooLong
 	ErrHdrValBad
 	ErrHdrNumTooBig
 	ErrHdrTrunc
@@ -40,6 +42,8 @@ var err2ErrorVal = [...]error{
 	ErrHdrBadChar,
 	ErrHdrParams,
 	ErrHdrBad,
+	ErrHdrValNotNumber,
+	ErrHdrValTooLong,
 	ErrHdrValBad,
 	ErrHdrNumTooBig,
 	ErrHdrTrunc,
@@ -58,6 +62,8 @@ var errHdrStr = [...]string{
 	ErrHdrBadChar:      "invalid character in header",
 	ErrHdrParams:       "error parsing header parameter",
 	ErrHdrBad:          "bad header",
+	ErrHdrValNotNumber: "header value is not a number",
+	ErrHdrValTooLong:   "header value is too long",
 	ErrHdrValBad:       "bad header value",
 	ErrHdrNumTooBig:    "numeric header value too big",
 	ErrHdrTrunc:        "incomplete/truncated data",

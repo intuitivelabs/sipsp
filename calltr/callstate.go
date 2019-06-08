@@ -377,7 +377,13 @@ func fillAttrsSrc(m *sipsp.PSIPMsg, dir int, src *[AttrLast]*sipsp.PField) {
 			src[AttrToURI] = &m.PV.To.URI
 			src[AttrMethod] = &m.FL.Method
 			src[AttrRURI] = &m.FL.URI
-			src[AttrContact] = &m.HL.GetHdr(sipsp.HdrContact).Val
+			// get 1st contact uri
+			cv := m.PV.Contacts.GetContact(0)
+			if cv != nil {
+				src[AttrContact] = &cv.URI
+			} else {
+				src[AttrContact] = nil
+			}
 			src[AttrReason] = nil
 			src[AttrUA] = &m.HL.GetHdr(sipsp.HdrUA).Val
 			src[AttrUAS] = nil
@@ -397,7 +403,16 @@ func fillAttrsSrc(m *sipsp.PSIPMsg, dir int, src *[AttrLast]*sipsp.PField) {
 			src[AttrToURI] = &m.PV.To.URI
 			src[AttrMethod] = &m.PV.CSeq.Method
 			src[AttrRURI] = nil
-			src[AttrContact] = nil
+			if m.Method() == sipsp.MRegister && m.FL.Status >= 200 {
+				cv := m.PV.Contacts.GetContact(0)
+				if cv != nil {
+					src[AttrContact] = &cv.URI
+				} else {
+					src[AttrContact] = nil
+				}
+			} else {
+				src[AttrContact] = nil
+			}
 			src[AttrReason] = &m.FL.Reason
 			src[AttrUA] = nil
 			src[AttrUAS] = &m.HL.GetHdr(sipsp.HdrUA).Val
@@ -406,7 +421,16 @@ func fillAttrsSrc(m *sipsp.PSIPMsg, dir int, src *[AttrLast]*sipsp.PField) {
 			src[AttrToURI] = &m.PV.From.URI
 			src[AttrMethod] = nil
 			src[AttrRURI] = nil
-			src[AttrContact] = &m.HL.GetHdr(sipsp.HdrContact).Val
+			if m.Method() != sipsp.MRegister {
+				cv := m.PV.Contacts.GetContact(0)
+				if cv != nil {
+					src[AttrContact] = &cv.URI
+				} else {
+					src[AttrContact] = nil
+				}
+			} else {
+				src[AttrContact] = nil
+			}
 			src[AttrReason] = nil
 			src[AttrUA] = &m.HL.GetHdr(sipsp.HdrUA).Val
 			src[AttrUAS] = nil

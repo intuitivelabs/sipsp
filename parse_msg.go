@@ -8,18 +8,34 @@ type PSIPMsg struct {
 	HL   HdrLst   // headers
 	Body PField   // message body
 
-	hdrs         [10]Hdr // headers broken into name: val used inside HL
-	Buf          []byte  // message data, parsed values will point inside it
-	SIPMsgIState         // internal state
+	hdrs         [10]Hdr       // headers broken into name: val used inside HL
+	contacts     [10]PFromBody // default parsed contacts space
+	Buf          []byte        // message data, parsed values will point inside it
+	SIPMsgIState               // internal state
 }
 
 func (m *PSIPMsg) Reset() {
 	*m = PSIPMsg{}
-	m.HL.Hdrs = m.hdrs[:]
+	m.FL.Reset()
+	m.PV.Reset()
+	m.HL.Reset()
+	m.Body.Reset()
+	m.SIPMsgIState = SIPMsgIState{}
 }
 
-func (m *PSIPMsg) Init() {
+func (m *PSIPMsg) Init(msg []byte, hdrs []Hdr, contacts []PFromBody) {
 	m.Reset()
+	m.Buf = msg
+	if hdrs != nil {
+		m.HL.Hdrs = hdrs
+	} else {
+		m.HL.Hdrs = m.hdrs[:]
+	}
+	if contacts != nil {
+		m.PV.Contacts.Init(contacts)
+	} else {
+		m.PV.Contacts.Init(m.contacts[:])
+	}
 }
 
 func (m *PSIPMsg) Parsed() bool {

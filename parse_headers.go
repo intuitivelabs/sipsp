@@ -52,33 +52,39 @@ const (
 	HdrContact
 	HdrExpires
 	HdrUA
+	HdrRecordRoute
+	HdrRoute
 	HdrOther // generic, non recognized header
 )
 
 const (
-	HdrFromF    HdrFlags = 1 << HdrFrom
-	HdrToF      HdrFlags = 1 << HdrTo
-	HdrCallIDF  HdrFlags = 1 << HdrCallID
-	HdrCSeqF    HdrFlags = 1 << HdrCSeq
-	HdrCLenF    HdrFlags = 1 << HdrCLen
-	HdrContactF HdrFlags = 1 << HdrContact
-	HdrExpiresF HdrFlags = 1 << HdrExpires
-	HdrUAF      HdrFlags = 1 << HdrUA
-	HdrOtherF   HdrFlags = 1 << HdrOther
+	HdrFromF        HdrFlags = 1 << HdrFrom
+	HdrToF          HdrFlags = 1 << HdrTo
+	HdrCallIDF      HdrFlags = 1 << HdrCallID
+	HdrCSeqF        HdrFlags = 1 << HdrCSeq
+	HdrCLenF        HdrFlags = 1 << HdrCLen
+	HdrContactF     HdrFlags = 1 << HdrContact
+	HdrExpiresF     HdrFlags = 1 << HdrExpires
+	HdrUAF          HdrFlags = 1 << HdrUA
+	HdrRecordRouteF HdrFlags = 1 << HdrRecordRoute
+	HdrRouteF       HdrFlags = 1 << HdrRoute
+	HdrOtherF       HdrFlags = 1 << HdrOther
 )
 
 // pretty names for debugging and error reporting
 var hdrTStr = [...]string{
-	HdrNone:    "nil",
-	HdrFrom:    "From",
-	HdrTo:      "To",
-	HdrCallID:  "Call-ID",
-	HdrCSeq:    "Cseq",
-	HdrCLen:    "Content-Length",
-	HdrContact: "Contact",
-	HdrExpires: "Expires",
-	HdrUA:      "User-Agent",
-	HdrOther:   "Generic",
+	HdrNone:        "nil",
+	HdrFrom:        "From",
+	HdrTo:          "To",
+	HdrCallID:      "Call-ID",
+	HdrCSeq:        "Cseq",
+	HdrCLen:        "Content-Length",
+	HdrContact:     "Contact",
+	HdrExpires:     "Expires",
+	HdrUA:          "User-Agent",
+	HdrRecordRoute: "Record-Router",
+	HdrRoute:       "Route",
+	HdrOther:       "Generic",
 }
 
 func (t HdrT) String() string {
@@ -110,6 +116,8 @@ var hdrName2Type = [...]hdr2Type{
 	{n: []byte("m"), t: HdrContact},
 	{n: []byte("expires"), t: HdrExpires},
 	{n: []byte("user-agent"), t: HdrUA},
+	{n: []byte("record-route"), t: HdrRecordRoute},
+	{n: []byte("route"), t: HdrRoute},
 }
 
 const (
@@ -213,22 +221,34 @@ type PHBodies interface {
 	GetTo() *PFromBody
 	GetCallID() *PCallIDBody
 	GetCSeq() *PCSeqBody
-	GetCLen() *PCLenBody
+	GetCLen() *PUIntBody
+	GetContacts() *PContacts
 	Reset()
 }
 
 // PHdrVals holds all the header specific parsed values structures.
 // (implement PHBodies=
 type PHdrVals struct {
-	From   PFromBody
-	To     PFromBody
-	Callid PCallIDBody
-	CSeq   PCSeqBody
-	CLen   PCLenBody
+	From     PFromBody
+	To       PFromBody
+	Callid   PCallIDBody
+	CSeq     PCSeqBody
+	CLen     PUIntBody
+	Contacts PContacts
 }
 
 func (hv *PHdrVals) Reset() {
-	*hv = PHdrVals{}
+	hv.From.Reset()
+	hv.To.Reset()
+	hv.Callid.Reset()
+	hv.CSeq.Reset()
+	hv.CLen.Reset()
+	hv.Contacts.Reset()
+}
+
+func (hv *PHdrVals) Init(contactsbuf []PFromBody) {
+	hv.Reset()
+	hv.Contacts.Init(contactsbuf)
 }
 
 func (hv *PHdrVals) GetFrom() *PFromBody {
@@ -249,6 +269,10 @@ func (hv *PHdrVals) GetCallID() *PCallIDBody {
 
 func (hv *PHdrVals) GetCLen() *PCLenBody {
 	return &hv.CLen
+}
+
+func (hv *PHdrVals) GetContacts() *PContacts {
+	return &hv.Contacts
 }
 
 // ParseHdrLine parses a header from a SIP message.
@@ -280,6 +304,7 @@ func ParseHdrLine(buf []byte, offs int, h *Hdr, hb PHBodies) (int, ErrorHdr) {
 		hCallID
 		hCSeq
 		hCLen
+		hContact
 		hFIN
 	)
 
@@ -328,7 +353,21 @@ func ParseHdrLine(buf []byte, offs int, h *Hdr, hb PHBodies) (int, ErrorHdr) {
 					h.state = hCLen
 					n, err = ParseCLenVal(buf, o, clenb)
 					if err == 0 { /* fix hdr.Val */
-						h.Val = clenb.CLen
+						h.Val = clenb.SVal
+					}
+				}
+			case HdrContact:
+				if contacts := hb.GetContacts(); contacts != nil {
+					if h.state != hContact {
+						// new contact header found
+						contacts.HNo++
+					}
+					h.state = hContact
+					n, err = ParseAllContactValues(buf, o, contacts)
+					if err == 0 { /* fix hdr.Val */
+						h.Val = contacts.LastHVal
+					}
+				}
 					}
 				}
 			}
@@ -490,6 +529,17 @@ func ParseHdrLine(buf []byte, offs int, h *Hdr, hb PHBodies) (int, ErrorHdr) {
 			n, err := ParseCLenVal(buf, i, clenb)
 			if err == 0 { /* fix hdr.Val */
 				h.Val = clenb.CLen
+				h.state = hFIN
+			}
+			return n, err
+		case hContact: // continue contact parsing
+			contacts := hb.GetContacts()
+			n, err := ParseAllContactValues(buf, i, contacts)
+			if err == 0 { /* fix hdr.Val */
+				h.Val = contacts.LastHVal
+				h.state = hFIN
+			}
+			return n, err
 				h.state = hFIN
 			}
 			return n, err

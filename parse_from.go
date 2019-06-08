@@ -1,17 +1,26 @@
 package sipsp
 
 import (
-	//"fmt"
+	//	"fmt"
 
 	"andrei/sipsp/bytescase"
 )
 
+// PFromBody is used to hold a parsed From, To, Contact, RR or Route
 type PFromBody struct {
-	Name   PField
-	URI    PField
-	Tag    PField
-	Params PField
-	V      PField // complete value, trimmed
+	Name       PField
+	URI        PField
+	Tag        PField
+	Star       bool // contact: *
+	LR         bool // route ;lr present
+	HasExpires bool // expires present
+	Type       HdrT
+	Q          uint16 // contact q * 1000
+	Expires    uint32 // contact expires
+	Params     PField
+	V          PField   // complete value, trimmed
+	ParamErr   ErrorHdr // error parsing the params
+	ErrOffs    OffsT    // param parsing error offset
 	PFromIState
 }
 
@@ -75,11 +84,26 @@ const (
 	fbPTagG
 	fbPTagEq
 	fbPTagVal
-	fbFIN // parsing ended
+	fbStar // Contact: *
+	fbFIN  // parsing ended
 )
 
-// ParseFromVal parses the value/content of a From or To header.
-// The parameters are: a message buffer, the offset in the buffer where the
+func ParseFromVal(buf []byte, offs int, pfrom *PFromBody) (int, ErrorHdr) {
+	return ParseNameAddrPVal(HdrFrom, buf, offs, pfrom)
+}
+
+func multipleValsOk(h HdrT) bool {
+	switch h {
+	case HdrContact, HdrRecordRoute, HdrRoute:
+		return true
+	}
+	return false
+}
+
+// ParseNameAddrPVal parses the value/content of a From, To, Contact,
+// Record-Router or Route header.
+// The parameters are:  the type of the field to be parsed,
+// a message buffer, the offset in the buffer where the
 // from: (or to:) value starts (should point after the ':') and a pointer
 // to a from value structure that will be filled.
 // It returns a new offset, pointing immediately after the end of the header
@@ -88,10 +112,15 @@ const (
 //  ErrHdrMoreBytes will be returned and this function can be called again
 // when more bytes are available, with the same buffer, the returned
 // offset ("continue point") and the same pfrom structure.
+// If ErrHdrMoteValues is returned it means this header conatins multiple
+// values (e.g. Contact: foo@bar,x@y.z). In this case the pfrom structure
+// is filled with the current value and this function should be called
+// again  with a fresh pfrom to parse the next value, until success or another
+// error is returned.
 // WARNING: for now Name and Params might contain extra trailing whitespace
 //          (no attempt is made to eliminate it). URI and Tag are
 //           auto-trimmed.
-func ParseFromVal(buf []byte, offs int, pfrom *PFromBody) (int, ErrorHdr) {
+func ParseNameAddrPVal(h HdrT, buf []byte, offs int, pfrom *PFromBody) (int, ErrorHdr) {
 	// Name-addr <addr>;params
 	// internal parser state
 
@@ -102,7 +131,7 @@ func ParseFromVal(buf []byte, offs int, pfrom *PFromBody) (int, ErrorHdr) {
 	var s int = pfrom.soffs // saved "component" start offset
 	i := offs
 	var n, crl int // next non lws and crlf length
-	var err ErrorHdr
+	var err, retOkErr ErrorHdr
 	for i < len(buf) {
 		c := buf[i]
 		switch pfrom.state {
@@ -133,10 +162,14 @@ func ParseFromVal(buf []byte, offs int, pfrom *PFromBody) (int, ErrorHdr) {
 					goto moreBytes
 				}
 				return n, err
+			case ',':
+				if multipleValsOk(h) {
+					goto moreValues
+				}
 			case '<':
 				if pfrom.state != fbInit {
 					pfrom.Name.Set(s, i)
-					// if in fbNameOrURIEnd -> 1st token is for sure no uri
+					// if in fbNameOrURIEnd -> 1st token is for sure not uri
 					pfrom.URI.Reset()
 					pfrom.Params.Reset()
 					pfrom.Tag.Reset()
@@ -170,6 +203,12 @@ func ParseFromVal(buf []byte, offs int, pfrom *PFromBody) (int, ErrorHdr) {
 				}
 			case '>':
 				return i, ErrHdrBadChar
+			case '*':
+				if pfrom.state == fbInit {
+					pfrom.state = fbStar
+					s = i
+					pfrom.V.Set(i, i+1)
+				}
 			default:
 				if pfrom.state == fbInit {
 					s = i
@@ -245,6 +284,10 @@ func ParseFromVal(buf []byte, offs int, pfrom *PFromBody) (int, ErrorHdr) {
 					goto moreBytes
 				}
 				return n, err
+			case ',':
+				if multipleValsOk(h) {
+					goto moreValues
+				}
 			case ';':
 				pfrom.state = fbNewParam
 				s = 0 // start of actual params not yet known
@@ -285,6 +328,10 @@ func ParseFromVal(buf []byte, offs int, pfrom *PFromBody) (int, ErrorHdr) {
 					goto endOfHdr
 				}
 				return n, err
+			case ',':
+				if multipleValsOk(h) {
+					goto moreValues
+				}
 			case '=':
 				if pfrom.state == fbParamName {
 					pfrom.state = fbNewParamVal
@@ -383,6 +430,10 @@ func ParseFromVal(buf []byte, offs int, pfrom *PFromBody) (int, ErrorHdr) {
 					goto endOfHdr
 				}
 				return n, err
+			case ',':
+				if multipleValsOk(h) {
+					goto moreValues
+				}
 			case ';':
 				if pfrom.state == fbNewParamVal || pfrom.state == fbParamVal {
 					pfrom.state = fbNewParam
@@ -430,13 +481,44 @@ func ParseFromVal(buf []byte, offs int, pfrom *PFromBody) (int, ErrorHdr) {
 				// no other char allowed after a param value token
 				return i, ErrHdrBadChar
 			}
+		case fbStar:
+			switch c {
+			case ' ', '\t', '\n', '\r':
+				n, crl, err = skipLWS(buf, i)
+				switch err {
+				case ErrHdrMoreBytes:
+					i = n
+					goto moreBytes
+				case 0:
+					i = n
+					continue
+				case ErrHdrEOH:
+					// end of header
+					goto endOfHdr
+				}
+				return n, err
+			default:
+				// no other char allowed after a star
+				return i, ErrHdrBadChar
+			}
 		}
 		i++
 	}
 moreBytes:
 	// end of buffer
+	// if fixed string parsing (end is already known) is desired
+	// add here:
+	// if (...) {
+	//      crl = 0
+	//      goto endOfHdr
+	// }
+	// but there are still some errors that should be catched e.g "...\".
 	pfrom.soffs = s
 	return i, ErrHdrMoreBytes
+moreValues: // end of current value (','), more present
+	retOkErr = ErrHdrMoreValues
+	n = i
+	crl = 1
 endOfHdr:
 	// here i will point to first WS char (including CR & LF)
 	//      n will point to the line end (CR or LF)
@@ -468,6 +550,9 @@ endOfHdr:
 		//pfrom.Params.Set(int(pfrom.Params.Offs), i)
 		pfrom.Params.Extend(i)
 		pfrom.V.Extend(i)
+	case fbStar:
+		pfrom.Star = true
+		pfrom.URI = pfrom.V // set URI == '*'
 	case fbInit, fbName, fbURI, fbQuoted, fbQuotedVal, fbQuotedPossibleVal:
 		// end of header in unexpected state => bad header
 		return n + crl, ErrHdrBad
@@ -476,26 +561,104 @@ endOfHdr:
 	}
 	pfrom.state = fbFIN
 	pfrom.soffs = 0
-	return n + crl, 0
+	pfrom.Type = h
+	return n + crl, retOkErr
 }
 
-func setFromParamVal(buf []byte, pf *PFromBody) int {
+func setFromParamVal(buf []byte, pf *PFromBody) ErrorHdr {
+	var err ErrorHdr
 	tag := [...]byte{'t', 'a', 'g'}
+	expires := [...]byte{'e', 'x', 'p', 'i', 'r', 'e', 's'}
+	q := [...]byte{'q'}
+	lr := [...]byte{'l', 'r'}
+
 	if (pf.pstart < pf.pend) && (pf.vstart < pf.vend) {
 		// for now only tag=val is recognized, hard-wired
 		if ((pf.pend - pf.pstart) == len(tag)) &&
 			bytescase.CmpEq(buf[pf.pstart:pf.pend], tag[:]) {
 			pf.Tag.Set(pf.vstart, pf.vend)
+		} else if ((pf.pend - pf.pstart) == len(expires)) &&
+			bytescase.CmpEq(buf[pf.pstart:pf.pend], expires[:]) {
+			pf.HasExpires = true
+			exp, e := pUInt64Val(buf[pf.vstart:pf.vend])
+			if exp < uint64(^uint32(0)) {
+				pf.Expires = uint32(exp)
+			} else {
+				// truncate to max. uint32 (rfc3261)
+				pf.Expires = ^uint32(0)
+			}
+			// in REGISTER if value is not parsable the default is 3600
+			// however this won't be good for replies
+			err = e
+
+		} else if ((pf.pend - pf.pstart) == len(q)) &&
+			bytescase.CmpEq(buf[pf.pstart:pf.pend], q[:]) {
+			// find '.'
+			i := pf.vstart
+			for ; i < pf.vend && buf[i] != '.'; i++ {
+			}
+			if pf.vend-i <= 4 {
+				var u, d uint64
+				u, err = pUInt64Val(buf[pf.vstart:i])
+				if err == 0 && i < pf.vend {
+					d, err = pUInt64Val(buf[i+1 : pf.vend])
+				}
+				if err == 0 {
+					if u > 1 || d > 999 || (u == 1 && d > 0) {
+						err = ErrHdrValBad
+						pf.ParamErr = err
+						pf.ErrOffs = OffsT(pf.vstart)
+					} else {
+						switch pf.vend - (i + 1) {
+						case 1:
+							d = d * 100
+						case 2:
+							d = d * 10
+						}
+						pf.Q = uint16(u*1000 + d)
+					}
+				}
+			} else {
+				err = ErrHdrValTooLong
+				pf.ParamErr = err
+				pf.ErrOffs = OffsT(pf.vend)
+			}
+		} else if ((pf.pend - pf.pstart) == len(lr)) &&
+			bytescase.CmpEq(buf[pf.pstart:pf.pend], lr[:]) {
+			pf.LR = true
 		}
-		pf.pstart = 0
-		pf.pend = 0
-		pf.vstart = 0
-		pf.vend = 0
-		return 0
+	} else if (pf.pstart < pf.pend) && (pf.vstart == pf.vend) {
+		// lr normally has no value
+		if ((pf.pend - pf.pstart) == len(lr)) &&
+			bytescase.CmpEq(buf[pf.pstart:pf.pend], lr[:]) {
+			pf.LR = true
+		}
+	} else {
+		err = ErrHdrValBad
+		pf.ParamErr = err
+		pf.ErrOffs = OffsT(pf.vstart)
 	}
 	pf.pstart = 0
 	pf.pend = 0
 	pf.vstart = 0
 	pf.vend = 0
-	return -1
+	return err
+}
+
+func pUInt64Val(b []byte) (n uint64, err ErrorHdr) {
+
+	if len(b) > 20 {
+		err = ErrHdrValTooLong
+		return
+	}
+
+	for _, c := range b {
+		if c < '0' || c > '9' {
+			err = ErrHdrValNotNumber
+			return
+		}
+		n = n*10 + uint64(c-'0')
+	}
+
+	return
 }

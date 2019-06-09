@@ -27,6 +27,9 @@ func (c *PContacts) GetContact(n int) *PFromBody {
 	if c.VNo() > n {
 		return &c.Vals[n]
 	}
+	if c.Empty() {
+		return nil
+	}
 	if c.N == (n + 1) {
 		return &c.last
 	}

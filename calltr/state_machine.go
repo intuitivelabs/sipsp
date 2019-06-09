@@ -52,17 +52,18 @@ func replRetr(e *CallEntry, m *sipsp.PSIPMsg, dir int) bool {
 // 1 for requests from the callee and replies from the caller (totag matches
 // fromtag).
 // See also updateStateRepl().
-// It returns the cuurent, updated CallState, the corresponding timeout and
-// an EventType
+// It returns the current, updated CallState, the corresponding timeout, the
+// timeout flags and an EventType.
 // The EventType is not checked for uniqueness (e.g. several call-start could
 // be generated one-after-another if several 2xx arrive)
-func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, TimeoutS, EventType) {
+func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, TimeoutS, TimerUpdateF, EventType) {
 	mmethod := m.FL.MethodNo
 	mcseq := m.PV.CSeq.CSeqNo
 	mhastotag := !m.PV.To.Tag.Empty()
 	prevState := e.State
 	newState := CallStNone
 	event := EvNone
+	toFlags := FTimerUpdForce
 	if reqRetr(e, m, dir) ||
 		mmethod == sipsp.MPrack /* ignore PRACKs */ ||
 		mmethod == sipsp.MUpdate /* ignore UPDATEs */ {
@@ -81,6 +82,7 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeout
 			event = EvCallAttempt
 		default:
 			newState = prevState // ignore CANCEL, keep old state
+			toFlags = FTimerUpdGT
 		}
 	default:
 		// INVITE, ACK or non-INVITE in-dialog
@@ -103,6 +105,20 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeout
 				newState = CallStEstablished
 				event = EvCallStart
 			default:
+				// REGISTER hack: update timeout only if bigger then current
+				// (to allow keeping long-term REGISTER entry that will
+				//  catch REGISTER re-freshes), both for REGISTER refreshes
+				// and for other messages in the same "dialog" (e.g. OPTIONs)
+				if mmethod == sipsp.MRegister || e.Method == sipsp.MRegister {
+					toFlags = FTimerUpdGT
+					// update Contact...
+					if mmethod == sipsp.MRegister {
+						if mC := m.PV.Contacts.GetContact(0); mC != nil {
+							e.Info.overwriteAttrField(AttrContact,
+								&mC.URI, m.Buf)
+						}
+					}
+				}
 				newState = prevState // keep same state
 			}
 			goto end
@@ -114,18 +130,54 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeout
 		 CallStNonInvNegReply)
 		 -  like above, but a request for which we missed the negative
 		 reply
+		 - a "new" REGISTER refresh for a contact (some UAs send them
+		   without the to-tag but with the same callid and from-tag as
+		   the original REGITERs and increased CSeq).
 		 - some strange broken call
+		 - a to-tag less OPTIONS for a REGISTER like above
 		*/
 		/* we allow for missed replies, if not execute the following
 		code only for prevState == CallStInit, CallStNonInvNegReply,
 		CallStNegReply and for anything else keep the current state */
 		switch mmethod {
 		case sipsp.MInvite:
-			newState = CallStFInv
+			if prevState == CallStInit || prevState == CallStNegReply {
+				// e.g.: INVITE after auth failure
+				newState = CallStFInv
+			} else {
+				// INVITE w/o toTag and cseq++ in early dialog  or established??
+				// (should not happen)
+				newState = prevState
+			}
 		case sipsp.MAck:
 			newState = prevState // keep state for ack
+		case sipsp.MRegister:
+			// REGISTER refresh hack: update timeout only if bigger
+			// then current (to allow keeping long-term REGISTER
+			// entry that will catch refreshes)
+			if prevState != CallStInit {
+				toFlags = FTimerUpdGT
+				// keep state, a REG refresh should not change it
+				// (otherwise due to the match REGs w/o to-tags hack a
+				// REG-refresh  might get here and reset the state)
+				newState = prevState // keep state
+				// update Contact...
+				if mC := m.PV.Contacts.GetContact(0); mC != nil {
+					e.Info.overwriteAttrField(AttrContact, &mC.URI, m.Buf)
+				}
+			} else {
+				newState = CallStFNonInv
+			}
 		default:
-			newState = CallStFNonInv
+			if prevState != CallStInit && mmethod != e.Method {
+				toFlags = FTimerUpdGT
+				// another force-matched message that has
+				// a different method then the orig. message should
+				// not cause state changes
+				newState = prevState // keep state
+			} else {
+				newState = CallStFNonInv
+			}
 		}
 	}
 end:
@@ -133,6 +185,7 @@ end:
 	e.ReqsNo[dir]++
 	// update state
 	e.prevState = e.State // debugging
+	e.lastMethod = mmethod
 	e.State = newState
 	// add extra event attributes from msg that are not already set
 	e.Info.AddFromMsg(m, dir)
@@ -140,9 +193,10 @@ end:
 	if event != EvNone {
 		e.evGen = EvGenReq
 	}
-	return newState, TimeoutS(newState.TimeoutS()), event
+	return newState, TimeoutS(newState.TimeoutS()), toFlags, event
 retr: // retransmission or PRACK
-	return prevState, TimeoutS(newState.TimeoutS()), EvNone // do nothing
+	toFlags = FTimerUpdGT // update timer only if not already greater...
+	return prevState, TimeoutS(newState.TimeoutS()), toFlags, EvNone
 }
 
 // updateStateRepl() updates the call state in a forgiving maximum
@@ -156,14 +210,16 @@ retr: // retransmission or PRACK
 // 1 for requests from the callee and replies from the caller (totag matches
 // fromtag).
 // See also updateStateReq().
-// It returns the current, updtead CallState, a timeout and an EventType.
+// It returns the current, updated CallState, the corresponding timeout, the
+// timeout flags and an EventType.
 // The EventType is not checked for uniqueness (e.g. several call-start could
 // be generated one-after-another if several 2xx arrive)
 // TODO: event support for REGISTER (full with deletions and expires) and
 //      SUBSCRIBE/NOTIFY (requires extra parsing)
 // TODO: REG timeout = Max Expires, or if bad value 3600 (rfc3261) ??
-func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, TimeoutS, EventType) {
+func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, TimeoutS, TimerUpdateF, EventType) {
 	var to TimeoutS
+	toFlags := FTimerUpdForce
 	mstatus := m.FL.Status
 	mmethod := m.PV.CSeq.MethodNo
 	mcseq := m.PV.CSeq.CSeqNo
@@ -223,6 +279,19 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 			case CallStFNonInv:
 				newState = CallStNonInvNegReply
 				// no event here
+			case CallStNonInvFinished:
+				// REGISTER HACK: if the neg reply is to a REGISTER refresh
+				// matching a "REGISTER-extended-lifetime" entry, update
+				// the timeout only if it would be greater then current
+				// lifetime.
+				// Ignore also possible negative replies to OPTIONs (or
+				// other methods) sent in the same "dialog"
+				if (mmethod == sipsp.MRegister &&
+					(e.Flags&CFRegReplacedHack != 0)) ||
+					e.Method == sipsp.MRegister {
+					toFlags = FTimerUpdGT
+				}
+				newState = prevState // keep the current state
 			default:
 				newState = prevState // keep the current state
 			}
@@ -273,48 +342,54 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 				event = EvCallStart
 			case CallStEstablished:
 				// do nothing
+				newState = prevState // keep the current state
 			case CallStNonInvNegReply:
 				// allow 2xx after negative replies
 				fallthrough
 			case CallStFNonInv:
 				newState = CallStNonInvFinished
 				if mmethod == sipsp.MRegister {
-					event = EvRegNew
-					// TODO: if not all Contacts parsed, parse manually
-					//       REGISTER contacts
-					savedC := e.Info.Attrs[AttrContact].Get(e.Info.buf)
-					if len(savedC) == 0 {
-						// no contact in the request
-						// it's either a "ping" REGISTER or the call-entry
-						// was created from a REG reply w/ no contact (?)
-						// in either case we generate no event
-						event = EvNone
-					} else if len(savedC) == 1 && savedC[0] == '*' {
-						// "*" contact - consider a reply the delete
-						//  confirmation
-						event = EvRegDel
-						to = 0
-					} else if found, hasExp, exp := msgMatchContact(m, savedC); found {
-						if hasExp && exp == 0 {
-							// contact with 0 expire
-							event = EvRegDel
-							to = 0
-						} else {
-							to = TimeoutS(exp)
-						}
-					} else { // not found
-						event = EvRegDel
-						to = 0
-					}
+					// REGISTER special HACK
+					event, to = handleRegRepl(e, m)
+				}
+			case CallStNonInvFinished:
+				newState = prevState // keep the current state
+				if mmethod == sipsp.MRegister {
+					// REGISTER special HACK
+					event, to = handleRegRepl(e, m)
+				} else if e.Method == sipsp.MRegister {
+					// other message matching a REGISTER created entry
+					// e.g. OPTIONS
+					toFlags = FTimerUpdGT
 				}
 			default:
 				newState = prevState // keep the current state
 			}
 		default: // <= 199
+			// 3 possible cases:
+			//   1. provisional reply before any final reply
+			//   2. provisional reply in-dialog after the dialog
+			//      was established
+			//   3. provisional reply to a REGISTER-refresh (that
+			//       matches the extended REGISTER call-entry)
+			//  For 2 & 3 the timeout should be changed only if the result
+			//  would be greater then the current timeout
 			switch prevState {
 			case CallStInit, CallStFInv:
 				newState = CallStEarlyDlg
+			case CallStNonInvFinished:
+
+				// REGISTER HACK
+				/*
+					if mmethod == sipsp.MRegister &&
+						(e.Flags&CFRegReplacedHack != 0) {
+						toFlags = FTimerUpdGT
+					}
+					newState = prevState
+				*/
+				fallthrough
 			default:
+				toFlags = FTimerUpdGT
 				newState = prevState
 			}
 		}
@@ -322,8 +397,15 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 	//end:
 	e.ReplCSeq[dir] = mcseq
 	//? only if newState =! prevState ? (not ignored?)
-	e.ReplStatus[dir] = mstatus
-	e.Info.overwriteAttrField(AttrReason, &m.FL.Reason, m.Buf)
+	if mmethod == e.Method {
+		// status updates only for replies to dialog-creation requests
+		// and its re-freshes
+		// a possible exception could be made for
+		//   e.Method == MInvite & mmethod = MCancel
+		e.ReplStatus[dir] = mstatus
+		e.Info.overwriteAttrField(AttrReason, &m.FL.Reason, m.Buf)
+	}
+	e.lastReplStatus[dir] = mstatus
 	e.ReplsNo[dir]++
 	e.prevState = e.State
 	e.State = newState
@@ -336,13 +418,14 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 	if to == 0 {
 		to = TimeoutS(newState.TimeoutS())
 	}
-	return newState, to, event
+	return newState, to, toFlags, event
 retr: // retransmission, ignore
+	toFlags = FTimerUpdGT // update timer only if not already greater...
 	to = TimeoutS(prevState.TimeoutS())
-	return prevState, to, EvNone
+	return prevState, to, toFlags, EvNone
 }
 
-func updateState(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, TimeoutS, EventType) {
+func updateState(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, TimeoutS, TimerUpdateF, EventType) {
 	if m.FL.Request() {
 		return updateStateReq(e, m, dir)
 	}
@@ -436,22 +519,27 @@ func msgMatchContact(m *sipsp.PSIPMsg, c []byte) (bool, bool, uint32) {
 	// For now compare the contacts returned in
 	//       the reply with the 1st contact in the
 	//       original REGISTER
-	mCNo := m.PV.Contacts.VNo()
+	//mCNo := m.PV.Contacts.VNo()
 	var pCuri sipsp.PsipURI
 	err1, _ := sipsp.ParseURI(c, &pCuri)
 
-	for n := 0; n < mCNo; n++ {
+	for n := 0; n < m.PV.Contacts.N; /*mCNo*/ n++ {
 		var mPCuri sipsp.PsipURI
-		mCuri := m.PV.Contacts.Vals[n].URI.Get(m.Buf)
+		//mCuri := m.PV.Contacts.Vals[n].URI.Get(m.Buf)
+		mC := m.PV.Contacts.GetContact(n)
+		if mC == nil {
+			continue
+		}
+		mCuri := mC.URI.Get(m.Buf)
 		err2, _ := sipsp.ParseURI(mCuri, &mPCuri)
 		if (err1 == 0 && err2 == 0 &&
-			sipsp.URICmpShort(&pCuri, c, &mPCuri, m.Buf)) ||
+			sipsp.URICmpShort(&pCuri, c, &mPCuri, mCuri)) ||
 			// fallback to normal string compare if unparsable uris:
 			(err1 != 0 && err2 != 0 && bytescase.CmpEq(mCuri, c)) {
 			// match
 			found = true
-			exp = m.PV.Contacts.Vals[n].Expires
-			hasExp = m.PV.Contacts.Vals[n].HasExpires
+			exp = mC.Expires
+			hasExp = mC.HasExpires
 			if !hasExp {
 				if m.PV.Expires.Parsed() {
 					exp = m.PV.Expires.UIVal
@@ -466,7 +554,7 @@ func msgMatchContact(m *sipsp.PSIPMsg, c []byte) (bool, bool, uint32) {
 	// deleted or it did not fit in the contact list
 	// (e.g. VNo() < N -> N-VNo() missing contacts)
 	if !found {
-		if m.PV.Contacts.VNo() <= m.PV.Contacts.N {
+		if m.PV.Contacts.VNo() == m.PV.Contacts.N {
 			// really missing
 			exp = 0
 		} else {
@@ -482,4 +570,44 @@ func msgMatchContact(m *sipsp.PSIPMsg, c []byte) (bool, bool, uint32) {
 		}
 	}
 	return found, hasExp, exp
+}
+
+func handleRegRepl(e *CallEntry, m *sipsp.PSIPMsg) (event EventType, to TimeoutS) {
+	event = EvRegNew
+	// TODO: if not all Contacts parsed, parse manually
+	//       REGISTER contacts
+	savedC := e.Info.Attrs[AttrContact].Get(e.Info.buf)
+	if len(savedC) == 0 {
+		// no contact in the request
+		// it's either a "ping" REGISTER or the call-entry
+		// was created from a REG reply w/ no contact (?)
+		// in either case we generate no event
+		event = EvNone
+		exp, _ := m.PV.MaxExpires()
+		to = TimeoutS(exp)
+	} else if len(savedC) == 1 && savedC[0] == '*' {
+		// "*" contact - consider a reply the delete
+		//  confirmation
+		event = EvRegDel
+		to = 0
+	} else if found, hasExp, exp := msgMatchContact(m, savedC); found {
+		if hasExp && exp == 0 {
+			// contact with 0 expire
+			event = EvRegDel
+			to = 0
+		} else {
+			to = TimeoutS(exp)
+		}
+	} else { // not found
+		event = EvRegDel
+		to = 0
+	}
+	if event == EvRegNew {
+		// HACK: it's a new REG, in case this is an old
+		// recycled entry clear the EvRegDel flag
+		e.EvFlags.Clear(EvRegDel)
+	} else if event == EvRegDel {
+		e.EvFlags.Clear(EvRegNew) // clear RegNew to see them after a del
+	}
+	return
 }

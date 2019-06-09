@@ -3,6 +3,8 @@ package calltr
 import (
 	"log"
 	"sync"
+
+	"andrei/sipsp"
 )
 
 // hash table and hash bucket lists
@@ -124,9 +126,9 @@ func (lst *CallEntryLst) ForEachSafeRm(f func(e *CallEntry) bool) {
 // to tag. It returns the best matching CallEntry, the match type and the
 // match direction (0 for caller -> callee  and 1 for callee -> caller)
 // It does not use internal locking. Call it between Lock() / Unlock() to
-// be concurency safe.
+// be concurrency safe.
 func (lst *CallEntryLst) Find(callid, ftag, ttag []byte, cseq uint32,
-	status uint16) (*CallEntry, CallMatchType, int) {
+	status uint16, method sipsp.SIPMethod) (*CallEntry, CallMatchType, int) {
 
 	var callidMatch *CallEntry
 	var partialMatch *CallEntry
@@ -136,68 +138,37 @@ func (lst *CallEntryLst) Find(callid, ftag, ttag []byte, cseq uint32,
 		mt, dir := e.match(callid, ftag, ttag)
 		switch mt {
 		case CallFullMatch:
-			return e, mt, dir
-		case CallPartialMatch:
-			// TODO: consider CSeq, a final repl. entry with lower CSeq
-			//       might be a better match
-			/*
-				if partialMatch == nil ||
-					authFailure(e.ReplStatus[dir])
-					partialMatch = e
-					partialMDir = dir
-				}
-			*/
-
-			/* if more partialMatches, choose the one that has a
-			   failed auth. If there are more, or there is none with
-			   failed auth, then choose the one with cseq < crt. message.
-			   If there are more, then choose the one with the lowest cseq
-			*/
-			if partialMatch == nil {
-				partialMatch = e
-				partialMDir = dir
-			} else if authFailure(e.ReplStatus[dir]) &&
-				!authFailure(partialMatch.ReplStatus[partialMDir]) {
-				partialMatch = e
-				partialMDir = dir
-			} else if (authFailure(e.ReplStatus[dir]) &&
-				authFailure(partialMatch.ReplStatus[partialMDir])) ||
-				!authFailure(partialMatch.ReplStatus[partialMDir]) {
-				// either both are auth failure or none => used CSeq
-				if cseq > partialMatch.CSeq[partialMDir] &&
-					cseq > e.CSeq[dir] {
-					if e.CSeq[dir] > partialMatch.CSeq[partialMDir] {
-						partialMatch = e
-						partialMDir = dir
-					} // else do nothing, keep partialMatch
-				} else if cseq > e.CSeq[dir] {
-					partialMatch = e
-					partialMDir = dir
-				} // else do nothing, keep partialMatch
+			//  don't FullMatch if no to-tag is present, at least
+			//        not if Methods are != or this is not an ACK or
+			//        CANCEL (BYE should always have a valid totag)
+			if len(ttag) != 0 || method == e.Method ||
+				(e.Method == sipsp.MInvite && (method == sipsp.MAck ||
+					method == sipsp.MCancel)) {
+				return e, mt, dir
 			}
+			// else:
+			mt = CallPartialMatch
+			fallthrough
+		case CallPartialMatch:
+			partialMatch, partialMDir = chooseCallIDMatch(
+				e, dir, partialMatch, partialMDir, cseq, status, method)
 
 			// continue searching for a possible better match
 		case CallCallIDMatch:
 			/*  some UAs reuse the same CallId with different from
 			tags, at least for REGISTER reauth.
-			rfc3261 doesn't explicitely forbid this (one can argue
+			rfc3261 doesn't explicitly forbid this (one can argue
 			that even INVITEs re-sent due to a challenge are allowed to
 			have a different fromtag if they are not already part of a
 			dialog).
 			A REGISTER resent due to an auth failure could even have
-			a  different callid (rfc3261: SHOULD have tehe same callid),
+			a  different callid (rfc3261: SHOULD have the same callid),
 			but we cannot handle this case.
+			However we try "hard" to match REGISTER to previous REGISTER
+			entries, even if the only  thing in common is the callid.
 			*/
-
-			// TODO: consider CSeq, an final repl. entry with lower CSeq
-			//       might be a better match
-			if callidMatch == nil {
-				callidMatch = e // fallback if we don't find something better
-			} else if e.Key.ToTag.Len == 0 {
-				callidMatch = e // an entry with a not set totag is better
-			} else if authFailure(e.ReplStatus[0]) {
-				callidMatch = e // an auth. failure entry is better
-			}
+			callidMatch, _ = chooseCallIDMatch(
+				e, dir, callidMatch, 0, cseq, status, method)
 		case CallNoMatch: // do nothing
 		}
 	}
@@ -208,4 +179,140 @@ func (lst *CallEntryLst) Find(callid, ftag, ttag []byte, cseq uint32,
 		return nil, CallNoMatch, 0
 	}
 	return partialMatch, CallPartialMatch, partialMDir
+}
+
+/*
+// choose best partial match between 2 CallEntry-s (with the same
+//  callid), for a message with a given cseq and reply status
+// (status == 0 for a request).
+// dir1 & dir2 are the match directions for the respective CallEntry-s.
+// Returns "best" matching call entry
+func choosePartialMatch(e1 *CallEntry, dir1 int, e2 *CallEntry, dir2 int,
+	cseq uint32, status uint16, method sipsp.SIPMethod) (*CallEntry, int) {
+
+	if e1 == nil {
+		return e2, dir2
+	}
+	if e2 == nil {
+		return e1, dir1
+	}
+	// prefer matching methods
+	if e1.Method != e2.Method {
+		if e1.Method == method {
+			return e1, dir1
+		}
+		if e2.Method == method {
+			return e2, dir2
+		}
+	}
+	// either both entries method match or neither matches with method
+	// => it does not really matter what we choose
+
+	if cseq == e1.CSeq[dir1] && cseq != e2.CSeq[dir2] {
+		return e1, dir1
+	}
+	if cseq != e1.CSeq[dir1] && cseq == e2.CSeq[dir2] {
+		return e2, dir2
+	}
+	if (cseq == e1.CSeq[dir1] && cseq == e2.CSeq[dir2]) ||
+		(cseq > e1.CSeq[dir1] && cseq > e2.CSeq[dir2]) {
+		// equal cseqs or current msg cseq > both entries cseq
+		// if more partialMatches, choose the one that has a
+		//   failed auth. If there are more, or there is none with
+		//   failed auth, then choose the one with cseq < crt. message.
+		//   If there are more, then choose the one with the lowest cseq
+		if authFailure(e1.ReplStatus[dir1]) &&
+			!authFailure(e2.ReplStatus[dir2]) {
+			// e1 has a failed auth. => return it
+			return e1, dir1
+		}
+		if authFailure(e2.ReplStatus[dir2]) &&
+			!authFailure(e1.ReplStatus[dir1]) {
+			// e2 has a failed auth. => return it
+			return e2, dir2
+		}
+		// either both have auth failure or none => fallback to
+		// using CSeq
+		if e1.CSeq[dir1] > e2.CSeq[dir2] {
+			return e1, dir1
+		}
+		return e2, dir2
+	}
+	// here cseq is less then both or only one of them, return the greater one
+	if e1.CSeq[dir1] > e2.CSeq[dir2] {
+		return e1, dir1
+	}
+	return e2, dir2
+}
+*/
+
+// pick the best callid-only match between 2 CallEntry-s (with the same
+//  callid), for a message with a given cseq and reply status
+// (status == 0 for a request).
+// dir1 & dir2 are the match directions for the respective CallEntry-s.
+// Returns "best" matching call entry
+func chooseCallIDMatch(e1 *CallEntry, dir1 int, e2 *CallEntry, dir2 int,
+	cseq uint32, status uint16, method sipsp.SIPMethod) (*CallEntry, int) {
+
+	if e1 == nil {
+		return e2, dir2
+	}
+	if e2 == nil {
+		return e1, dir1
+	}
+	// prefer matching methods
+	if e1.Method != e2.Method {
+		if e1.Method == method {
+			return e1, dir1
+		}
+		if e2.Method == method {
+			return e2, dir2
+		}
+	}
+	// either both entries method match or neither matches with method
+	// => it does not really matter what we choose
+	// for a callID only match we cannot rely on the message CSeq
+	// (when changing the from tag the CSeq numbering is most likely
+	//  restarted), but it still probable enough that using CSeq will
+	// get them most recent entry
+	if cseq == e1.CSeq[dir1] && cseq != e2.CSeq[dir2] {
+		return e1, dir1
+	}
+	if cseq != e1.CSeq[dir1] && cseq == e2.CSeq[dir2] {
+		return e2, dir2
+	}
+
+	if (cseq == e1.CSeq[dir1] && cseq == e2.CSeq[dir2]) ||
+		(cseq > e1.CSeq[dir1] && cseq > e2.CSeq[dir2]) {
+		// equal cseqs or current msg cseq > both entries cseq
+		// (e.g. in the case of REGISTER with changing from-tags )
+		if authFailure(e1.ReplStatus[dir1]) && !authFailure(e2.ReplStatus[dir2]) {
+			// e1 has a failed auth. => return it
+			return e1, dir1
+		}
+		if authFailure(e2.ReplStatus[dir2]) && !authFailure(e1.ReplStatus[dir1]) {
+			// e2 has a failed auth. => return it
+			return e2, dir2
+		}
+		if authFailure(e1.ReplStatus[dir1]) && authFailure(e2.ReplStatus[dir2]) {
+			//  both have auth failure => fall back to using CSeq
+			// (arbitrarily pick the entry with the greater CSeq, probably
+			//  more recent)
+			if e1.CSeq[dir1] > e2.CSeq[dir2] {
+				return e1, dir1
+			}
+			return e2, dir2
+		}
+		// either both have auth failure or none => fallback to
+		// using CSeq
+		if e1.CSeq[dir1] > e2.CSeq[dir2] {
+			return e1, dir1
+		}
+		return e2, dir2
+	}
+	// here cseq is less then both or only one of them, return the greater one
+	if e1.CSeq[dir1] > e2.CSeq[dir2] {
+		return e1, dir1
+	}
+	return e2, dir2
 }

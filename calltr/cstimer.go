@@ -138,8 +138,26 @@ func csTimerTryStopUnsafe(cs *CallEntry) bool {
 	return h.Stop()
 }
 
-func csTimerUpdateTimeoutUnsafe(cs *CallEntry, after time.Duration) bool {
+type TimerUpdateF uint8
+
+const (
+	FTimerUpdGT TimerUpdateF = 1 << iota
+	FTimerUpdLT
+)
+
+const FTimerUpdForce TimerUpdateF = FTimerUpdGT | FTimerUpdLT
+
+func csTimerUpdateTimeoutUnsafe(cs *CallEntry, after time.Duration,
+	f TimerUpdateF) bool {
 	newExpire := time.Now().Add(after)
+	if f&FTimerUpdForce != FTimerUpdForce {
+		if f&FTimerUpdGT != 0 && !newExpire.After(cs.Timer.Expire) {
+			return true
+		}
+		if f&FTimerUpdLT != 0 && !cs.Timer.Expire.After(newExpire) {
+			return true
+		}
+	}
 	if cs.Timer.Expire.After(newExpire) {
 		// timeout reduced => have to stop & re-add
 		cs.Timer.Expire = newExpire

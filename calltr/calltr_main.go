@@ -31,9 +31,16 @@ func newCallEntry(hashNo, cseq uint32, m *sipsp.PSIPMsg, n *[2]NetInfo, dir int,
 	toTagL := uint(m.PV.To.Tag.Len)
 	if toTagL == 0 { // TODO: < DefaultToTagLen (?)
 		toTagL = DefaultToTagLen
+	} else if toTagL > MinTagLen {
+		toTagL = MinTagLen
 	}
-	keySize := uint(m.PV.Callid.CallID.Len) + uint(m.PV.From.Tag.Len) +
-		toTagL
+	fromTagL := uint(m.PV.From.Tag.Len)
+	if fromTagL == 0 {
+		fromTagL = DefaultFromTagLen
+	} else if fromTagL < MinTagLen {
+		fromTagL = MinTagLen
+	}
+	keySize := uint(m.PV.Callid.CallID.Len) + fromTagL + toTagL
 	if keySize > MaxTagSpace {
 		// TODO: remove log and add some stats ?
 		log.Printf("newCallEntry: callid + tags too big: %d for %s\n",
@@ -141,11 +148,40 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 			}
 			return e
 		}
+		// REGISTER in-place update HACK:
+		// update final-replied register entries in-place to catch
+		// re-registrations for UAs that change from-tags between
+		// replies, but keep callid and still increase cseqs
+		if m.Method() == sipsp.MRegister && e.Method == sipsp.MRegister &&
+			(e.State == CallStNonInvFinished ||
+				e.State == CallStNonInvNegReply) &&
+			e.Key.TagSpace(int(newFromTag.Len), totagSpace) {
+
+			// check for possible old retransmissions
+			// (hoping the cseq are increased)
+			if (m.Request() && reqRetr(e, m, dir)) ||
+				(!m.Request() && replRetr(e, m, dir)) {
+				// partial match that looks like a retr...=> do nothing
+				// let updateState to treat it as a retr.
+				return e
+			} else {
+				// not a retr. -> update Tags
+				if !e.Key.SetFTag(newFromTag.Get(m.Buf), totagSpace) {
+					log.Printf("forkCallEntry: BUG: unexpected failure\n")
+					return nil
+				}
+				if !e.Key.SetToTag(newToTag.Get(m.Buf)) {
+					log.Printf("forkCallEntry: BUG: partial match to\n")
+					return nil
+				}
+				e.Flags |= CFRegReplacedHack
+				return e
+			}
+		}
 		// else fallback to call entry fork
 	case CallPartialMatch:
 		if e.Key.ToTag.Len == 0 {
 			// update a missing to tag
-			// TODO: use FromTag if dir == 1 ??
 			// e.g. missed 200, received NOTIFY from the other side...
 			if e.Key.SetToTag(newToTag.Get(m.Buf)) {
 				// successfully update
@@ -162,25 +198,55 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 			//    ??? update to-tag?, ignore?
 		} else {
 			// else try same replace neg. reply trick as for CallIdMatch
-			// TODO: use CSeq too, e.g. update only if greater CSeq ... ?
+			// with possible retransmissions checks (CSeq & Status based)
 			// TODO: use ReplStatus[0] or CallStatus since we don't care
 			//       about in-dialog failures???
-			// TODO: use FromTag if dir == 1 ??
 			totagSpace := int(newToTag.Len)
 			if totagSpace == 0 {
 				totagSpace = DefaultToTagLen
 			}
 			if (e.State == CallStNegReply || e.State == CallStNonInvNegReply) &&
-				e.Key.TagSpace(int(newFromTag.Len), totagSpace) &&
+				e.Key.TagSpace(int(e.Key.FromTag.Len), totagSpace) &&
+				e.Method == m.Method() &&
 				authFailure(e.ReplStatus[dir]) {
 
 				// check for possible old retransmissions
-				if (m.Request() && !reqRetr(e, m, dir)) ||
-					(!m.Request() && !replRetr(e, m, dir)) {
+				if (m.Request() && reqRetr(e, m, dir)) ||
+					(!m.Request() && replRetr(e, m, dir)) {
+					// partial match that looks like a retr...=> do nothing
+					// let updateState treat it as a retr.
+					return e
+				} else {
+					// update to-tag
 					if !e.Key.SetToTag(newToTag.Get(m.Buf)) {
 						log.Printf("forkCallEntry: BUG: partial match to\n")
 						return nil
 					}
+					return e
+				}
+			}
+			// REGISTER in-place update HACK:
+			// update final-replied register entries in-place to catch
+			// re-registrations for UAs that don't properly use the
+			// to-tag in the initial reply
+			if m.Method() == sipsp.MRegister && e.Method == sipsp.MRegister &&
+				(e.State == CallStNonInvFinished ||
+					e.State == CallStNonInvNegReply) &&
+				e.Key.TagSpace(int(e.Key.FromTag.Len), totagSpace) {
+
+				// check for possible old retransmissions
+				if (m.Request() && reqRetr(e, m, dir)) ||
+					(!m.Request() && replRetr(e, m, dir)) {
+					// partial match that looks like a retr...=> do nothing
+					// let updateState to treat it as a retr.
+					return e
+				} else {
+					// not a retr. -> update ToTag
+					if !e.Key.SetToTag(newToTag.Get(m.Buf)) {
+						log.Printf("forkCallEntry: BUG: partial match to\n")
+						return nil
+					}
+					e.Flags |= CFRegReplacedHack
 					return e
 				}
 			}
@@ -218,7 +284,7 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 // It returns true on success and false on failure.
 // If it returns false, e might be no longer valid (if not referenced before).
 func addCallEntryUnsafe(e *CallEntry, m *sipsp.PSIPMsg, dir int) (bool, EventType) {
-	_, to, ev := updateState(e, m, dir)
+	_, to, _, ev := updateState(e, m, dir)
 	e.Ref() // for the hash
 	cstHash.HTable[e.hashNo].Insert(e)
 	cstHash.HTable[e.hashNo].IncStats()
@@ -257,6 +323,7 @@ func addCallEntryUnsafe(e *CallEntry, m *sipsp.PSIPMsg, dir int) (bool, EventTyp
 //
 func ProcessMsg(m *sipsp.PSIPMsg, n *[2]NetInfo, f HandleEvF, evd *EventData, flags CallStProcessFlags) (*CallEntry, CallMatchType, int, EventType) {
 	var to TimeoutS
+	var toF TimerUpdateF
 	ev := EvNone
 	if !(m.Parsed() &&
 		m.HL.PFlags.AllSet(sipsp.HdrFrom, sipsp.HdrTo,
@@ -276,7 +343,8 @@ func ProcessMsg(m *sipsp.PSIPMsg, n *[2]NetInfo, f HandleEvF, evd *EventData, fl
 		m.PV.From.Tag.Get(m.Buf),
 		m.PV.To.Tag.Get(m.Buf),
 		m.PV.CSeq.CSeqNo,
-		m.FL.Status)
+		m.FL.Status,
+		m.Method())
 	switch match {
 	case CallNoMatch:
 		if flags&CallStProcessNew != 0 {
@@ -320,9 +388,9 @@ func ProcessMsg(m *sipsp.PSIPMsg, n *[2]NetInfo, f HandleEvF, evd *EventData, fl
 			case n == e:
 				// in-place update
 				e.Ref() // we return it
-				_, to, ev = updateState(e, m, dir)
+				_, to, toF, ev = updateState(e, m, dir)
 				csTimerUpdateTimeoutUnsafe(e,
-					time.Duration(to)*time.Second)
+					time.Duration(to)*time.Second, toF)
 			default:
 
 				e = n
@@ -342,9 +410,9 @@ func ProcessMsg(m *sipsp.PSIPMsg, n *[2]NetInfo, f HandleEvF, evd *EventData, fl
 	case CallFullMatch:
 		e.Ref()
 		if flags&CallStProcessUpdate != 0 {
-			_, to, ev = updateState(e, m, dir)
+			_, to, toF, ev = updateState(e, m, dir)
 			csTimerUpdateTimeoutUnsafe(e,
-				time.Duration(to)*time.Second)
+				time.Duration(to)*time.Second, toF)
 		}
 	default:
 		log.Panicf("calltr.ProcessMsg: unexpected match type %d\n", match)

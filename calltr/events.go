@@ -135,18 +135,20 @@ type EventData struct {
 	Attrs      [AttrLast]sipsp.PField
 
 	// debugging
-	ForkedTS  time.Time
-	State     CallState
-	PrevState CallState
-	LastEv    EventType
-	EvFlags   EventFlags
-	CSeq      [2]uint32
-	RCSeq     [2]uint32
-	Reqs      [2]uint
-	Repls     [2]uint
-	FromTag   sipsp.PField
-	ToTag     sipsp.PField
-	EvGen     EvGenPos // where was the event generated
+	ForkedTS   time.Time
+	State      CallState
+	PrevState  CallState
+	LastMethod sipsp.SIPMethod
+	LastStatus uint16
+	LastEv     EventType
+	EvFlags    EventFlags
+	CSeq       [2]uint32
+	RCSeq      [2]uint32
+	Reqs       [2]uint
+	Repls      [2]uint
+	FromTag    sipsp.PField
+	ToTag      sipsp.PField
+	EvGen      EvGenPos // where was the event generated
 
 	Valid int    // no of valid, non truncated PFields
 	Used  int    // how much of the buffer is used / current offset
@@ -208,6 +210,8 @@ func (d *EventData) Fill(ev EventType, e *CallEntry) int {
 	d.ForkedTS = e.forkedTS
 	d.State = e.State
 	d.PrevState = e.prevState
+	d.LastMethod = e.lastMethod
+	d.LastStatus = e.lastReplStatus[0]
 	d.LastEv = e.lastEv
 	d.EvFlags = e.EvFlags
 	d.EvGen = e.evGen
@@ -287,6 +291,8 @@ func (ed *EventData) String() string {
 		ed.CSeq[0], ed.CSeq[1], ed.RCSeq[0], ed.RCSeq[1], ed.ForkedTS)
 	s += fmt.Sprintf("	DBG: reqNo: %4d/%4d  replNo: %4d/%4d\n",
 		ed.Reqs[0], ed.Reqs[1], ed.Repls[0], ed.Repls[1])
+	s += fmt.Sprintf("	DBG: last method: %s  last status:%d\n",
+		ed.LastMethod, ed.LastStatus)
 	return s
 }
 

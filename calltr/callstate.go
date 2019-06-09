@@ -12,12 +12,14 @@ import (
 )
 
 const (
-	ToTagMinSpace       = 8   // minimum space reserver for to-tag
 	MaxTagSpace         = 384 // maximum space reserved for callid + fromtag + totag
-	DefaultToTagLen     = 50  // space reserved for totag
-	MaxURISpace         = 96  // max uri size for saving to-uri, from-uri and r-uri
-	DefaultURISpace     = 64  // in case an uri size is not yet known, reserve...
-	MaxMethodSpace      = 16  // max space for saving method
+	MinTagLen           = 32  // minimum space reserved for tags
+	DefaultTagLen       = 50  // space reserved for totag
+	DefaultToTagLen     = DefaultTagLen
+	DefaultFromTagLen   = DefaultTagLen
+	MaxURISpace         = 96 // max uri size for saving to-uri, from-uri and r-uri
+	DefaultURISpace     = 64 // in case an uri size is not yet known, reserve...
+	MaxMethodSpace      = 16 // max space for saving method
 	DefaultMethodSpace  = 16
 	MaxReasonSpace      = 64 // max space for saving a reply reason
 	DefaultReasonSpace  = 64 // if reason not known yet, reserve ...
@@ -70,7 +72,7 @@ func (c *CallKey) SetCF(callid, fromtag []byte, reserve int) bool {
 	callidLen := len(callid)
 	fromtagLen := len(fromtag)
 	if fromtagLen == 0 {
-		fromtagLen = DefaultToTagLen
+		fromtagLen = DefaultFromTagLen
 	}
 	if callidLen+fromtagLen+reserve > maxl {
 		DBG("SetCF(l:%d, l:%d, %d) failed max len %d\n",
@@ -103,7 +105,7 @@ func (c *CallKey) SetFTag(fromtag []byte, reserve int) bool {
 	fTagOffs := (int)(c.CallID.Offs + c.CallID.Len)
 	newFTagLen := len(fromtag)
 	if newFTagLen == 0 {
-		newFTagLen = DefaultToTagLen
+		newFTagLen = DefaultFromTagLen
 	}
 	if c.TagSpace(newFTagLen, reserve) == false {
 		return false
@@ -211,6 +213,7 @@ type CallFlags uint8
 
 const (
 	CFHashed CallFlags = 1 << iota
+	CFRegReplacedHack
 )
 
 type CallAttrIdx uint8
@@ -560,13 +563,15 @@ type CallEntry struct {
 	EvFlags    EventFlags // sent/generated events
 	evHandler  HandleEvF  // event handler function
 
-	StartTS   time.Time // call established time
-	CreatedTS time.Time // debugging
-	forkedTS  time.Time // debugging
-	prevState CallState // debugging
-	lastEv    EventType // debugging: event before crtEv
-	crtEv     EventType // debugging: most current event
-	evGen     EvGenPos  // debugging
+	StartTS        time.Time       // call established time
+	CreatedTS      time.Time       // debugging
+	forkedTS       time.Time       // debugging
+	prevState      CallState       // debugging
+	lastMethod     sipsp.SIPMethod // last non-retr. method  in the "dialog"
+	lastReplStatus [2]uint16       // last non-retry. reply status seen
+	lastEv         EventType       // debugging: event before crtEv
+	crtEv          EventType       // debugging: most current event
+	evGen          EvGenPos        // debugging
 
 	Timer  TimerInfo
 	refCnt int32 // reference counter, atomic

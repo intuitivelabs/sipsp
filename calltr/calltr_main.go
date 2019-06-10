@@ -31,7 +31,7 @@ func newCallEntry(hashNo, cseq uint32, m *sipsp.PSIPMsg, n *[2]NetInfo, dir int,
 	toTagL := uint(m.PV.To.Tag.Len)
 	if toTagL == 0 { // TODO: < DefaultToTagLen (?)
 		toTagL = DefaultToTagLen
-	} else if toTagL > MinTagLen {
+	} else if toTagL < MinTagLen {
 		toTagL = MinTagLen
 	}
 	fromTagL := uint(m.PV.From.Tag.Len)
@@ -50,14 +50,17 @@ func newCallEntry(hashNo, cseq uint32, m *sipsp.PSIPMsg, n *[2]NetInfo, dir int,
 	infoSize := infoReserveSize(m, dir)
 	e := AllocCallEntry(keySize, infoSize)
 	if e == nil {
-		DBG("newCallEntry: AllocEntry(%d, %d) failed\n", keySize, infoSize)
+		log.Printf("newCallEntry: AllocEntry(%d, %d) failed\n",
+			keySize, infoSize)
 		return nil
 	}
 	// TODO: if dir == 1 (e.g. fork on partial match from the other side)
 	// we should reverse the tags -- CHECK
 	if !e.Key.SetCF(m.PV.Callid.CallID.Get(m.Buf), m.PV.From.Tag.Get(m.Buf),
 		int(toTagL)) {
-		DBG("newCallEntry SetCF(%q, %q, %d) cidl: %d + ftl: %d  / %d failed\n",
+		// should never happen (we just reserved enough space)
+		log.Printf("BUG: newCallEntry SetCF(%q, %q, %d)"+
+			"  cidl: %d + ftl: %d  / %d failed\n",
 			m.PV.Callid.CallID.Get(m.Buf), m.PV.From.Tag.Get(m.Buf),
 			toTagL, m.PV.Callid.CallID.Len, m.PV.From.Tag.Len,
 			keySize)
@@ -65,11 +68,13 @@ func newCallEntry(hashNo, cseq uint32, m *sipsp.PSIPMsg, n *[2]NetInfo, dir int,
 	}
 	if m.PV.To.Tag.Len != 0 {
 		if !e.Key.SetToTag(m.PV.To.Tag.Get(m.Buf)) {
-			DBG("newCallEntry: SetToTag(%q [%d:%d]) failed: keySize: %d"+
-				"  cid %d:%d ft %d:%d (infoSize %d)",
-				m.PV.To.Tag.Get(m.Buf), m.PV.To.Tag.Offs, toTagL, keySize,
+			// should never happen (we just reserved enough space)
+			log.Printf("BUG: newCallEntry: SetToTag(%q [%d:%d/%d]) failed:"+
+				" keySize: %d  cid %d:%d ft %d:%d/%d (infoSize %d)\n",
+				m.PV.To.Tag.Get(m.Buf), m.PV.To.Tag.Offs, m.PV.To.Tag.Len,
+				toTagL, keySize,
 				m.PV.Callid.CallID.Offs, m.PV.Callid.CallID.Len,
-				m.PV.From.Tag.Offs, m.PV.From.Tag.Len,
+				m.PV.From.Tag.Offs, m.PV.From.Tag.Len, fromTagL,
 				infoSize)
 			goto error
 		}

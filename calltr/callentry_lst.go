@@ -139,11 +139,8 @@ func (lst *CallEntryLst) Find(callid, ftag, ttag []byte, cseq uint32,
 		switch mt {
 		case CallFullMatch:
 			//  don't FullMatch if no to-tag is present, at least
-			//        not if Methods are != or this is not an ACK or
-			//        CANCEL (BYE should always have a valid totag)
-			if len(ttag) != 0 || method == e.Method ||
-				(e.Method == sipsp.MInvite && (method == sipsp.MAck ||
-					method == sipsp.MCancel)) {
+			//        not if Methods are !=
+			if len(ttag) != 0 || method == e.Method {
 				return e, mt, dir
 			}
 			// else:

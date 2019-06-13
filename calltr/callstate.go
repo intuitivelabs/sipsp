@@ -212,9 +212,40 @@ func (s CallState) TimeoutS() uint {
 type CallFlags uint8
 
 const (
-	CFHashed CallFlags = 1 << iota
-	CFRegReplacedHack
+	CFHashed          CallFlags = 1 << iota
+	CFReused                    // entry re-use instead of forking
+	CFRegReplacedHack           // REGISTER re-use hack
+	CFForkChild
+	CFForkParent
+	CFCanceled // or fin reply recvd on some branch
 )
+
+// debugging, keep in sync with the CallFlags consts above
+var cfNames = [...]string{
+	"Entry_Hashed",
+	"Reused",
+	"REG_Reuse_Hack",
+	"Fork_Parent",
+	"Fork_Child",
+	"Canceled",
+	"invalid",
+	"invalid",
+	"invalid",
+}
+
+func (cf CallFlags) String() string {
+	var s string
+	for i := 1; i < len(cfNames); i++ {
+		if cf&(1<<uint(i)) != 0 {
+			if s != "" {
+				s += "|" + cfNames[i]
+			} else {
+				s += cfNames[i]
+			}
+		}
+	}
+	return s
+}
 
 type CallAttrIdx uint8
 
@@ -563,9 +594,11 @@ type CallEntry struct {
 	EvFlags    EventFlags // sent/generated events
 	evHandler  HandleEvF  // event handler function
 
-	StartTS        time.Time       // call established time
-	CreatedTS      time.Time       // debugging
-	forkedTS       time.Time       // debugging
+	StartTS        time.Time // call established time
+	CreatedTS      time.Time // debugging
+	forkedTS       time.Time // debugging
+	ReqsRetrNo     [2]uint
+	ReplsRetrNo    [2]uint
 	prevState      CallState       // debugging
 	lastMethod     sipsp.SIPMethod // last non-retr. method  in the "dialog"
 	lastReplStatus [2]uint16       // last non-retry. reply status seen

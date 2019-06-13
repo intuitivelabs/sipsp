@@ -157,6 +157,7 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 				log.Printf("forkCallEntry: BUG: unexpected failure\n")
 				return nil
 			}
+			e.Flags |= CFReused
 			return e
 		}
 		// REGISTER in-place update HACK:
@@ -185,7 +186,7 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 					log.Printf("forkCallEntry: BUG: partial match to\n")
 					return nil
 				}
-				e.Flags |= CFRegReplacedHack
+				e.Flags |= CFRegReplacedHack | CFReused
 				return e
 			}
 		}
@@ -196,6 +197,7 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 			// e.g. missed 200, received NOTIFY from the other side...
 			if e.Key.SetToTag(newToTag.Get(m.Buf)) {
 				// successfully update
+				e.Flags |= CFReused
 				return e
 			}
 			DBG("forkCallEntry: CallPartialMatch: SetToTag(%q) failed\n",
@@ -233,6 +235,7 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 						log.Printf("forkCallEntry: BUG: partial match to\n")
 						return nil
 					}
+					e.Flags |= CFReused
 					return e
 				}
 			}
@@ -257,7 +260,7 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 						log.Printf("forkCallEntry: BUG: partial match to\n")
 						return nil
 					}
-					e.Flags |= CFRegReplacedHack
+					e.Flags |= CFRegReplacedHack | CFReused
 					return e
 				}
 			}
@@ -283,6 +286,8 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 		n.forkedTS = time.Now()   // debugging
 		// not sure about keeping Attrs Reason (?)
 		n.Info.AddFromCi(&e.Info)
+		n.Flags |= CFForkChild
+		e.Flags |= CFForkParent
 	} else {
 		DBG("forkCallEntry: newCallEntry(...) failed\n")
 	}

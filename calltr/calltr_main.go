@@ -295,8 +295,12 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 		} else {
 			n.CSeq[0] = e.CSeq[0]
 		}
-		n.ReqsNo[0] = e.ReqsNo[0]
-		n.ReqsNo[1] = e.ReqsNo[1]
+		// leave ReqsNo and ReplsNo 0, they should count the reqs/repls
+		// received on this "forked" entry / branch
+		/*
+			n.ReqsNo[0] = e.ReqsNo[0]
+			n.ReqsNo[1] = e.ReqsNo[1]
+		*/
 		n.prevState = e.prevState // debugging
 		n.lastEv = e.lastEv       // debugging
 		n.CreatedTS = e.CreatedTS // debugging
@@ -305,6 +309,7 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 		n.Info.AddFromCi(&e.Info)
 		n.Flags |= CFForkChild
 		e.Flags |= CFForkParent
+		n.EvFlags = e.EvFlags // keep ev flags, don't want to regen. seen EVs
 	} else {
 		DBG("forkCallEntry: newCallEntry(...) failed\n")
 	}

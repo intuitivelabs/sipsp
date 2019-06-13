@@ -11,8 +11,12 @@ type TimeoutS uint32
 func reqRetr(e *CallEntry, m *sipsp.PSIPMsg, dir int) bool {
 	mcseq := m.PV.CSeq.CSeqNo
 	mmethod := m.FL.MethodNo
-	if mcseq < e.CSeq[dir] ||
-		(mcseq == e.CSeq[dir] &&
+	maxCSeq := e.CSeq[dir]
+	if e.CSeq[dir] < e.ReplCSeq[dir] {
+		maxCSeq = e.ReplCSeq[dir]
+	}
+	if mcseq < maxCSeq ||
+		(mcseq == maxCSeq &&
 			mmethod != sipsp.MAck && mmethod != sipsp.MCancel) {
 		return true
 	}
@@ -32,7 +36,11 @@ func authFailure(s uint16) bool {
 func replRetr(e *CallEntry, m *sipsp.PSIPMsg, dir int) bool {
 	mstatus := m.FL.Status
 	mcseq := m.PV.CSeq.CSeqNo
-	if mcseq < e.CSeq[dir] || mcseq < e.ReplCSeq[dir] ||
+	maxCSeq := e.CSeq[dir]
+	if e.CSeq[dir] < e.ReplCSeq[dir] {
+		maxCSeq = e.ReplCSeq[dir]
+	}
+	if mcseq < maxCSeq ||
 		(mcseq == e.ReplCSeq[dir] &&
 			mstatus <= e.ReplStatus[dir] &&
 			(!is2xx(mstatus) || is2xx(e.ReplStatus[dir]))) {
@@ -56,6 +64,7 @@ func replRetr(e *CallEntry, m *sipsp.PSIPMsg, dir int) bool {
 // timeout flags and an EventType.
 // The EventType is not checked for uniqueness (e.g. several call-start could
 // be generated one-after-another if several 2xx arrive)
+// unsafe, MUST be called w/ lock held or if no parallel access is possible
 func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, TimeoutS, TimerUpdateF, EventType) {
 	mmethod := m.FL.MethodNo
 	mcseq := m.PV.CSeq.CSeqNo
@@ -79,7 +88,9 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeout
 		case CallStInit, CallStFInv, CallStEarlyDlg:
 			// not 100% conformant, but more "compatible" with broken UAs
 			newState = CallStCanceled
-			event = EvCallAttempt
+			// we will generate CallAttempt on timeout to allow
+			// catching late 2XXs
+			// event = EvCallAttempt
 		default:
 			newState = prevState // ignore CANCEL, keep old state
 			toFlags = FTimerUpdGT
@@ -102,8 +113,19 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeout
 				}
 			case CallStFInv, CallStEarlyDlg:
 				// reply missed somehow, recover...
-				newState = CallStEstablished
-				event = EvCallStart
+				switch mmethod {
+				// CANCEL and BYE handled above
+				case sipsp.MAck:
+					// ACK can be to 2xx or to negative reply
+					// at this point (1st CallStFInv or CallStEarlyDlg)
+					// we can't tell => ignore
+					newState = prevState // keep the same state
+				default:
+					// in-dialog request that's not ACK, CANCEL or BYE
+					// => probably we missed a 2xx => recover
+					newState = CallStEstablished
+					event = EvCallStart
+				}
 			default:
 				// REGISTER hack: update timeout only if bigger then current
 				// (to allow keeping long-term REGISTER entry that will
@@ -145,8 +167,10 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeout
 				// e.g.: INVITE after auth failure
 				newState = CallStFInv
 			} else {
-				// INVITE w/o toTag and cseq++ in early dialog  or established??
-				// (should not happen)
+				// INVITE w/o toTag and cseq++ in early dialog  or established
+				// possible due to matching toTag="" INVITE to existing
+				// call-entries with to-tag!=""
+				// In this case update cseq, but keep state
 				newState = prevState
 			}
 		case sipsp.MAck:
@@ -196,6 +220,7 @@ end:
 	return newState, TimeoutS(newState.TimeoutS()), toFlags, event
 retr: // retransmission or PRACK
 	toFlags = FTimerUpdGT // update timer only if not already greater...
+	e.ReqsRetrNo[dir]++
 	return prevState, TimeoutS(newState.TimeoutS()), toFlags, EvNone
 }
 
@@ -217,13 +242,14 @@ retr: // retransmission or PRACK
 // TODO: event support for REGISTER (full with deletions and expires) and
 //      SUBSCRIBE/NOTIFY (requires extra parsing)
 // TODO: REG timeout = Max Expires, or if bad value 3600 (rfc3261) ??
+// unsafe, MUST be called w/ lock held or if no parallel access is possible
 func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, TimeoutS, TimerUpdateF, EventType) {
 	var to TimeoutS
 	toFlags := FTimerUpdForce
 	mstatus := m.FL.Status
 	mmethod := m.PV.CSeq.MethodNo
 	mcseq := m.PV.CSeq.CSeqNo
-	//mhastotag := !m.PV.To.Tag.Empty()
+	mhastotag := !m.PV.To.Tag.Empty()
 	prevState := e.State
 	newState := CallStNone
 	event := EvNone
@@ -260,7 +286,7 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 				if mmethod == sipsp.MInvite {
 					// here the situation is a bit ambiguous: the real state
 					// might also be ESTABLISHED (neg reply for an in-dialog
-					// request and all request missed so far), but without
+					// request and all requests missed so far), but without
 					// seeing the requests this is the best we could do
 					// (the most likely case)
 					newState = CallStNegReply
@@ -365,7 +391,7 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 			default:
 				newState = prevState // keep the current state
 			}
-		default: // <= 199
+		case mstatus >= 101: // 101-199 early dialog
 			// 3 possible cases:
 			//   1. provisional reply before any final reply
 			//   2. provisional reply in-dialog after the dialog
@@ -376,7 +402,12 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 			//  would be greater then the current timeout
 			switch prevState {
 			case CallStInit, CallStFInv:
-				newState = CallStEarlyDlg
+				if mhastotag {
+					newState = CallStEarlyDlg
+				} else {
+					toFlags = FTimerUpdGT
+					newState = prevState
+				}
 			case CallStNonInvFinished:
 
 				// REGISTER HACK
@@ -392,6 +423,9 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 				toFlags = FTimerUpdGT
 				newState = prevState
 			}
+		default: // 100 or invalid: ignore just update timeout
+			toFlags = FTimerUpdGT
+			newState = prevState
 		}
 	}
 	//end:
@@ -420,11 +454,13 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 	}
 	return newState, to, toFlags, event
 retr: // retransmission, ignore
+	e.ReplsRetrNo[dir]++
 	toFlags = FTimerUpdGT // update timer only if not already greater...
 	to = TimeoutS(prevState.TimeoutS())
 	return prevState, to, toFlags, EvNone
 }
 
+// unsafe, MUST be called w/ lock held or if no parallel access is possible
 func updateState(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, TimeoutS, TimerUpdateF, EventType) {
 	if m.FL.Request() {
 		return updateStateReq(e, m, dir)
@@ -437,6 +473,7 @@ var timeoutReason = []byte("internal: call state timeout")
 
 // finalTimeoutEv() should be called before destroying and expired call entry.
 // It returns the final EventType
+// unsafe, MUST be called w/ lock held or if no parallel access is possible
 func finalTimeoutEv(e *CallEntry) EventType {
 
 	var forcedStatus uint16

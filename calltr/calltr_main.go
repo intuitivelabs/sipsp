@@ -218,6 +218,23 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 			if totagSpace == 0 {
 				totagSpace = DefaultToTagLen
 			}
+			// if message has no to-tag but partially matches something
+			// that does it can be:
+			//  1. re-trans of the original message
+			//  2. new message (higher CSeq) sent in resp. to an auth.
+			//     failure or other? neg. reply
+			// In both cases it makes sense to "absorb" the message and
+			// not "fork" the call entry fo it.
+			// In the 2nd case, we might have not seen
+			// any reply (re-constructed from an ACK), but even in this
+			// case it should be safe to absorb the to-tagless message.
+			if newToTag.Len == 0 {
+
+				// catch retrans. for initial requests / or replies
+				// partial match that looks like a retr...=> do nothing
+				// let updateState treat it as a retr.
+				return e
+			}
 			if (e.State == CallStNegReply || e.State == CallStNonInvNegReply) &&
 				e.Key.TagSpace(int(e.Key.FromTag.Len), totagSpace) &&
 				e.Method == m.Method() &&

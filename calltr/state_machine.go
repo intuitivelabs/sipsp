@@ -219,9 +219,10 @@ end:
 	}
 	return newState, TimeoutS(newState.TimeoutS()), toFlags, event
 retr: // retransmission or PRACK
+	newState = prevState
 	toFlags = FTimerUpdGT // update timer only if not already greater...
 	e.ReqsRetrNo[dir]++
-	return prevState, TimeoutS(newState.TimeoutS()), toFlags, EvNone
+	return prevState, TimeoutS(prevState.TimeoutS()), toFlags, EvNone
 }
 
 // updateStateRepl() updates the call state in a forgiving maximum
@@ -454,6 +455,7 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 	}
 	return newState, to, toFlags, event
 retr: // retransmission, ignore
+	newState = prevState
 	e.ReplsRetrNo[dir]++
 	toFlags = FTimerUpdGT // update timer only if not already greater...
 	to = TimeoutS(prevState.TimeoutS())

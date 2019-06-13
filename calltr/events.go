@@ -65,8 +65,13 @@ func (f *EventFlags) Clear(e EventType) bool {
 	return ret
 }
 
-func (f *EventFlags) Test(e EventType) bool {
-	return uint(*f)&(1<<uint(e)) != 0
+func (f *EventFlags) Test(events ...EventType) bool {
+	for _, e := range events {
+		if uint(*f)&(1<<uint(e)) != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *EventFlags) ResetAll() {
@@ -142,10 +147,13 @@ type EventData struct {
 	LastStatus uint16
 	LastEv     EventType
 	EvFlags    EventFlags
+	CFlags     CallFlags
 	CSeq       [2]uint32
 	RCSeq      [2]uint32
 	Reqs       [2]uint
 	Repls      [2]uint
+	ReqsRetr   [2]uint
+	ReplsRetr  [2]uint
 	FromTag    sipsp.PField
 	ToTag      sipsp.PField
 	EvGen      EvGenPos // where was the event generated
@@ -214,11 +222,14 @@ func (d *EventData) Fill(ev EventType, e *CallEntry) int {
 	d.LastStatus = e.lastReplStatus[0]
 	d.LastEv = e.lastEv
 	d.EvFlags = e.EvFlags
+	d.CFlags = e.Flags
 	d.EvGen = e.evGen
 	d.CSeq = e.CSeq
 	d.RCSeq = e.ReplCSeq
 	d.Reqs = e.ReqsNo
 	d.Repls = e.ReplsNo
+	d.ReqsRetr = e.ReqsRetrNo
+	d.ReplsRetr = e.ReplsRetrNo
 	// end of debug
 
 	n = addPField(&e.Key.CallID, e.Key.buf,
@@ -289,8 +300,13 @@ func (ed *EventData) String() string {
 		ed.LastEv, ed.EvFlags.String(), ed.EvFlags, ed.EvGen.String())
 	s += fmt.Sprintf("	DBG: cseq: %6d/%6d  rcseq: %6d/%6d forked: %s\n",
 		ed.CSeq[0], ed.CSeq[1], ed.RCSeq[0], ed.RCSeq[1], ed.ForkedTS)
-	s += fmt.Sprintf("	DBG: reqNo: %4d/%4d  replNo: %4d/%4d\n",
-		ed.Reqs[0], ed.Reqs[1], ed.Repls[0], ed.Repls[1])
+	s += fmt.Sprintf("	DBG: reqNo: %4d/%4d retr: %4d/%4d"+
+		" replNo: %4d/%4d retr: %4d/%4d\n",
+		ed.Reqs[0], ed.Reqs[1], ed.ReqsRetr[0], ed.ReqsRetr[1],
+		ed.Repls[0], ed.Repls[1],
+		ed.ReplsRetr[0], ed.ReplsRetr[1])
+	s += fmt.Sprintf("	DBG: call flags: %s (0x%02x)\n",
+		ed.CFlags, int(ed.CFlags))
 	s += fmt.Sprintf("	DBG: last method: %s  last status:%d\n",
 		ed.LastMethod, ed.LastStatus)
 	return s
@@ -304,11 +320,24 @@ type HandleEvF func(callev *EventData)
 
 // update "event state", catching already generated events
 // returns ev or EvNone (if event was a retr)
+// unsafe, MUST be called w/ _e_ lock held or if no parallel access is possible
 func updateEvent(ev EventType, e *CallEntry) EventType {
-	if ev != EvNone && !e.EvFlags.Set(ev) {
+	// new event only if entry was not already canceled and event not
+	// already generated
+	if ev != EvNone && (e.Flags&CFCanceled == 0) && !e.EvFlags.Set(ev) {
 		// event not seen before
-		if ev == EvCallStart || ev == EvRegNew || ev == EvSubNew {
+		switch ev {
+		case EvCallStart, EvRegNew, EvSubNew:
 			e.StartTS = time.Now()
+		case EvCallAttempt:
+			// report call attempts only once per call and not per each
+			//  branch and only if no EvCallStart or EvCallEnd seen.
+			if e.Flags&(CFForkChild|CFForkParent) != 0 {
+				f := cstHash.HTable[e.hashNo].SetAllRelatedEvFlag(e, ev)
+				if f.Test(EvCallAttempt, EvCallStart, EvCallEnd) {
+					return EvNone
+				}
+			}
 		}
 		e.lastEv, e.crtEv = e.crtEv, ev // debugging
 		return ev

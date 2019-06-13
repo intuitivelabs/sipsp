@@ -521,13 +521,18 @@ func PrintNCalls(w io.Writer, max int) {
 		lst := &cstHash.HTable[i]
 		lst.Lock()
 		for e := lst.head.next; e != &lst.head; e = e.next {
-			fmt.Fprintf(w, "%6d. %q:%q:%q state: %q cseq [%3d:%3d]"+
+			fmt.Fprintf(w, "%6d. %q:%q:%q method: %s state: %q cseq [%3d:%3d]"+
 				" status: [%3d:%3d]"+
-				" reqs: [%3d:%3d] repls: [%3d:%3d] refcnt: %d expire: %ds\n",
+				" reqs: [%3d:%3d-%3d:%3d] repls: [%3d:%3d-%3d:%3d]"+
+				" flags: %q evFlags: %q  last ev: %q"+
+				" last method: %s last status %3d refcnt: %d expire: %ds\n",
 				n, e.Key.GetCallID(), e.Key.GetFromTag(),
-				e.Key.GetToTag(), e.State, e.CSeq[0], e.CSeq[1],
+				e.Key.GetToTag(), e.Method, e.State, e.CSeq[0], e.CSeq[1],
 				e.ReplStatus[0], e.ReplStatus[1],
-				e.ReqsNo[0], e.ReqsNo[1], e.ReplsNo[0], e.ReplsNo[1],
+				e.ReqsNo[0], e.ReqsNo[1], e.ReqsRetrNo[0], e.ReqsRetrNo[1],
+				e.ReplsNo[0], e.ReplsNo[1], e.ReplsRetrNo[0], e.ReplsRetrNo[1],
+				e.Flags, e.EvFlags, e.lastEv,
+				e.lastMethod, e.lastReplStatus,
 				e.refCnt, e.Timer.Expire.Sub(time.Now())/time.Second)
 			n++
 			if n > max {
@@ -588,13 +593,18 @@ func PrintCallsFilter(w io.Writer, start, max int, op int, cid []byte, re *regex
 				print = matchCallEntry(e, op, cid, re)
 			}
 			if print && n >= start {
-				fmt.Fprintf(w, "%6d. %q:%q:%q state: %q cseq [%3d:%3d]"+
+				fmt.Fprintf(w, "%6d. %q:%q:%q method: %s state: %q cseq [%3d:%3d]"+
 					" status: [%3d:%3d]"+
-					" reqs: [%3d:%3d] repls: [%3d:%3d] refcnt: %d expire: %ds\n",
+					" reqs: [%3d:%3d-%3d:%3d] repls: [%3d:%3d-%3d:%3d]"+
+					" flags: %q evFlags: %q  last ev: %q"+
+					" last method: %s last status %3d refcnt: %d expire: %ds\n",
 					n, e.Key.GetCallID(), e.Key.GetFromTag(),
-					e.Key.GetToTag(), e.State, e.CSeq[0], e.CSeq[1],
+					e.Key.GetToTag(), e.Method, e.State, e.CSeq[0], e.CSeq[1],
 					e.ReplStatus[0], e.ReplStatus[1],
-					e.ReqsNo[0], e.ReqsNo[1], e.ReplsNo[0], e.ReplsNo[1],
+					e.ReqsNo[0], e.ReqsNo[1], e.ReqsRetrNo[0], e.ReqsRetrNo[1],
+					e.ReplsNo[0], e.ReplsNo[1], e.ReplsRetrNo[0], e.ReplsRetrNo[1],
+					e.Flags, e.EvFlags.String(), e.lastEv,
+					e.lastMethod, e.lastReplStatus,
 					e.refCnt, e.Timer.Expire.Sub(time.Now())/time.Second)
 				printed++
 			}

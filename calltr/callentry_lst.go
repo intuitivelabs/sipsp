@@ -1,6 +1,7 @@
 package calltr
 
 import (
+	"bytes"
 	"log"
 	"sync"
 
@@ -176,6 +177,89 @@ func (lst *CallEntryLst) Find(callid, ftag, ttag []byte, cseq uint32,
 		return nil, CallNoMatch, 0
 	}
 	return partialMatch, CallPartialMatch, partialMDir
+}
+
+// GetAllRelatedEvFlags iterates on all the related entries and returns
+// the merged EvFlags.
+// A related entry is an entry with the same Call-ID, in the same
+// hash bucket. The flags for the "current" entry will not be part of the
+// return.
+// It does not use internal locking. Call it between Lock() / Unlock() to
+// be concurrency safe.
+func (lst *CallEntryLst) GetAllRelatedEvFlags(crt *CallEntry) EventFlags {
+	var f EventFlags
+	callid := crt.Key.GetCallID()
+	callidLen := crt.Key.CallID.Len
+	for e := lst.head.next; e != &lst.head; e = e.next {
+		if e == crt {
+			// skip over the current entry
+			continue
+		}
+		if (e.Key.CallID.Len == callidLen) &&
+			bytes.Equal(e.Key.GetCallID(), callid) {
+			// found a match
+			f |= e.EvFlags
+		}
+	}
+	return f
+}
+
+// SetAllRelatedEvFlag iterates on all the related entries, sets the provided
+// event flag and returns the original merged EvFlags (before Set).
+// A related entry is an entry with the same Call-ID, in the same
+// hash bucket. The flags for the "current" entry will not be part of the
+// return or Set operation.
+// It does not use internal locking. Call it between Lock() / Unlock() to
+// be concurrency safe.
+func (lst *CallEntryLst) SetAllRelatedEvFlag(crt *CallEntry, s EventType) EventFlags {
+	var f EventFlags
+	callid := crt.Key.GetCallID()
+	callidLen := crt.Key.CallID.Len
+	for e := lst.head.next; e != &lst.head; e = e.next {
+		if e == crt {
+			// skip over the current entry
+			continue
+		}
+		if (e.Key.CallID.Len == callidLen) &&
+			bytes.Equal(e.Key.GetCallID(), callid) {
+			// found a match
+			f |= e.EvFlags
+			e.EvFlags.Set(s)
+		}
+	}
+	return f
+}
+
+// CancelRelatedCalls iterates on all the related entries and
+// cancel any initial or early dialog.
+// A related entry is an entry with the same Call-ID, in the same
+// hash bucket.
+// It returns the number of "canceled" entries
+// It does not use internal locking. Call it between Lock() / Unlock() to
+// be concurrency safe.
+func (lst *CallEntryLst) CancelRelatedCalls(crt *CallEntry) int {
+	callid := crt.Key.GetCallID()
+	callidLen := crt.Key.CallID.Len
+	n := 0
+	for e := lst.head.next; e != &lst.head; e = e.next {
+		if e == crt {
+			// skip over the current entry
+			continue
+		}
+		if (e.Key.CallID.Len == callidLen) &&
+			bytes.Equal(e.Key.GetCallID(), callid) {
+			// found a match
+			switch e.State {
+			case CallStInit, CallStFInv, CallStEarlyDlg, CallStNegReply:
+				fallthrough
+			case CallStFNonInv, CallStNonInvNegReply:
+				e.Flags |= CFCanceled
+				// could also try to "shorten" the timeout
+				n++
+			}
+		}
+	}
+	return n
 }
 
 /*

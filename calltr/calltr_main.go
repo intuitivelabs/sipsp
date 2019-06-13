@@ -14,6 +14,12 @@ func DBG(f string, a ...interface{}) {
 	fmt.Printf("DBG: calltr: "+f, a...)
 }
 
+type Config struct {
+	RegDelta uint32 // registartion expire delta in s, added to expire timeouts
+}
+
+var Cfg Config
+
 var cstHash CallEntryHash
 
 func init() {

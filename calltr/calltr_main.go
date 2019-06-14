@@ -218,39 +218,28 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 			if totagSpace == 0 {
 				totagSpace = DefaultToTagLen
 			}
-			// if message has no to-tag but partially matches something
-			// that does it can be:
-			//  1. re-trans of the original message
-			//  2. new message (higher CSeq) sent in resp. to an auth.
-			//     failure or other? neg. reply
-			// In both cases it makes sense to "absorb" the message and
-			// not "fork" the call entry fo it.
-			// In the 2nd case, we might have not seen
-			// any reply (re-constructed from an ACK), but even in this
-			// case it should be safe to absorb the to-tagless message.
-			if newToTag.Len == 0 {
-
-				// catch retrans. for initial requests / or replies
-				// partial match that looks like a retr...=> do nothing
-				// let updateState treat it as a retr.
-				return e
-			}
+			// if final negative reply, try to re-use the call-entry
+			// This catches serial forking and retry after auth. failure.
+			// Both messages with and without to-tag are considered,
+			// in case we missed some intermediate reply.
 			if (e.State == CallStNegReply || e.State == CallStNonInvNegReply) &&
 				e.Key.TagSpace(int(e.Key.FromTag.Len), totagSpace) &&
-				e.Method == m.Method() &&
-				authFailure(e.ReplStatus[dir]) {
+				e.Method == m.Method() /*&& authFailure(e.ReplStatus[dir]*/ {
 
 				// check for possible old retransmissions
 				if (m.Request() && reqRetr(e, m, dir)) ||
 					(!m.Request() && replRetr(e, m, dir)) {
 					// partial match that looks like a retr...=> do nothing
 					// let updateState treat it as a retr.
+					// and don't update the to-tag
 					return e
 				} else {
-					// update to-tag
-					if !e.Key.SetToTag(newToTag.Get(m.Buf)) {
-						log.Printf("forkCallEntry: BUG: partial match to\n")
-						return nil
+					// update to-tag, if request or not 100
+					if m.Request() || m.FL.Status > 100 {
+						if !e.Key.SetToTag(newToTag.Get(m.Buf)) {
+							log.Printf("forkCallEntry: BUG: partial match to\n")
+							return nil
+						}
 					}
 					e.Flags |= CFReused
 					return e
@@ -260,6 +249,8 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 			// update final-replied register entries in-place to catch
 			// re-registrations for UAs that don't properly use the
 			// to-tag in the initial reply
+			// Note: that CallStNonInvNegReply should be catched by the
+			//       above if, it's here just for completeness/readability
 			if m.Method() == sipsp.MRegister && e.Method == sipsp.MRegister &&
 				(e.State == CallStNonInvFinished ||
 					e.State == CallStNonInvNegReply) &&
@@ -273,13 +264,43 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 					return e
 				} else {
 					// not a retr. -> update ToTag
-					if !e.Key.SetToTag(newToTag.Get(m.Buf)) {
-						log.Printf("forkCallEntry: BUG: partial match to\n")
-						return nil
+					// update to-tag, if request or not 100
+					if m.Request() || m.FL.Status > 100 {
+						if !e.Key.SetToTag(newToTag.Get(m.Buf)) {
+							log.Printf("forkCallEntry: BUG: partial match to\n")
+							return nil
+						}
 					}
 					e.Flags |= CFRegReplacedHack | CFReused
 					return e
 				}
+			}
+			// if message has no to-tag but partially matches something
+			// that does it can be:
+			//  1. re-trans of the original message
+			//  2. proxy serial forking (re-send orig. msg after neg.
+			//     reply but to a different destination)
+			//  3. new message (higher CSeq) sent in resp. to an auth.
+			//     failure or other? neg. reply
+			//  4. new message matching old early dialog for which we missed
+			//     the final reply
+			// In all the cases it makes sense to "absorb" the message and
+			// not "fork" the call entry fo it.
+			// If it is a retr. update_state will handle it accordingly.
+			// In the 3rd case, we might have not seen
+			// any reply (re-constructed from an ACK), but even in this
+			// case it should be safe to absorb the to-tagless message.
+			// Note that 2 and 3 will be caught by the "if" above that
+			// treats serial forking and auth failure.
+			// If the entry reply is a final negative one, we should reset
+			// the totag too. Note however that this case will be caught by
+			// the above if, so we don't have to worry here about it.
+			// Here we can be if the call is in established state and
+			// not a REGISTER or if it's in an early dialog state
+			// (can't be in an initial because in that case it won't have a
+			//  a totag and it would have been a full-match).
+			if newToTag.Len == 0 {
+				return e
 			}
 		}
 	}

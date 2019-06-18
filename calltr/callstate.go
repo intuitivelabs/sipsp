@@ -5,6 +5,7 @@ import (
 	//	"fmt"
 	"net"
 	// "sync"
+	"strconv" // dbg
 	"sync/atomic"
 	"time"
 
@@ -579,6 +580,174 @@ func addSlice(src []byte, dstP *sipsp.PField, dbuf *[]byte, offs *int, max int) 
 	return n
 }
 
+// record message type and direction
+// TODO: move it in a separate file and conditional compile
+// format: last bit (15) -> direction, 0 caller -callee or 1 (reverse)
+//              bit 14   -> type: 0 request, 1 reply
+//              bit 13-10 -> retransmission no. 0 == no retr, max 16)
+//              bits 0-9 -> reply status , if type == 1
+//              bit 0-8  -> request method no. if type == 0
+type MsgRec uint16
+
+const (
+	MsgRecDir1F      = 1 << 15
+	MsgRecReplF      = 1 << 14
+	MsgRecRetrPos    = 10
+	MsgRecRetrMask   = 0x3c00
+	MsgRecMaxRetr    = MsgRecRetrMask >> MsgRecRetrPos
+	MsgRecMethodMask = 0xff
+	MsgRecStatusMask = 0x03ff
+)
+
+func (m *MsgRec) InitReq(method sipsp.SIPMethod, dir, retr int) {
+	*m = MsgRec(uint16(method) | uint16(dir<<15) |
+		(uint16(retr<<MsgRecRetrPos) & MsgRecRetrMask))
+}
+
+func (m *MsgRec) InitRepl(status uint16, dir, retr int) {
+	*m = MsgRec(status | uint16(dir<<15) |
+		(uint16(retr<<MsgRecRetrPos) & MsgRecRetrMask) | MsgRecReplF)
+}
+
+func (m *MsgRec) Retrs() int {
+	retrs := (uint(*m) & MsgRecRetrMask) >> MsgRecRetrPos
+	return int(retrs)
+}
+
+func (m *MsgRec) SetRetrs(retr int) {
+	*m = MsgRec((uint16(*m) &^ MsgRecRetrMask) |
+		(uint16(retr<<MsgRecRetrPos) & MsgRecRetrMask))
+}
+
+func (m *MsgRec) String() string {
+	var str string
+	if (*m&MsgRecDir1F != 0) != (*m&MsgRecReplF != 0) {
+		// if dir  & repl diff (e.g. 0 1 or 1 0)
+		str = "<"
+	} else {
+		// if dir & repl same
+		str = ">"
+	}
+	/*
+		if *m&MsgRecRetrMask != 0 {
+			str += "*"
+		}
+	*/
+	if *m&MsgRecReplF != 0 {
+		str += strconv.Itoa(int(*m & MsgRecStatusMask))
+	} else {
+		str += sipsp.SIPMethod(*m & MsgRecMethodMask).String()
+	}
+	if *m&MsgRecRetrMask != 0 {
+		str += "{" +
+			strconv.Itoa(int(uint(*m&MsgRecRetrMask)>>MsgRecRetrPos)) + "}"
+	}
+	return str
+}
+
+// records a message "backtrace" (method type/repl status, direction, isRetr)
+// TODO: move it in a separate file and conditional compile
+type MsgBackTrace struct {
+	Msgs [16]MsgRec
+	N    uint // number of message
+}
+
+func (m *MsgBackTrace) AddReq(method sipsp.SIPMethod, dir, retr int) {
+	if retr != 0 && m.N > 0 {
+		var mr MsgRec
+		mr.InitReq(method, dir, 0)
+		idx := int(m.N-1) % len(m.Msgs)
+		if m.Msgs[idx]&^MsgRecRetrMask == mr {
+			newRetr := m.Msgs[idx].Retrs() + retr
+			if newRetr > MsgRecMaxRetr {
+				retr -= (newRetr - MsgRecMaxRetr)
+				newRetr = MsgRecMaxRetr
+				m.Msgs[idx].SetRetrs(newRetr)
+				// fallthrough to adding new "record" with rest retrs.
+			} else {
+				// update existing record and exit
+				m.Msgs[idx].SetRetrs(newRetr)
+				return
+			}
+		}
+	}
+	m.Msgs[int(m.N)%len(m.Msgs)].InitReq(method, dir, retr)
+	m.N++
+}
+
+func (m *MsgBackTrace) AddRepl(status uint16, dir, retr int) {
+	if retr != 0 && m.N > 0 {
+		var mr MsgRec
+		mr.InitRepl(status, dir, 0)
+		idx := int(m.N-1) % len(m.Msgs)
+		if m.Msgs[idx]&^MsgRecRetrMask == mr {
+			newRetr := m.Msgs[idx].Retrs() + retr
+			if newRetr > MsgRecMaxRetr {
+				retr -= (newRetr - MsgRecMaxRetr)
+				newRetr = MsgRecMaxRetr
+				m.Msgs[idx].SetRetrs(newRetr)
+				// fallthrough to adding new "record" with rest retrs.
+			} else {
+				// update existing record and exit
+				m.Msgs[idx].SetRetrs(newRetr)
+				return
+			}
+		}
+	}
+	m.Msgs[int(m.N)%len(m.Msgs)].InitRepl(status, dir, retr)
+	m.N++
+}
+
+func (m *MsgBackTrace) String() string {
+	var i uint
+	var str string
+	// last len(Msgs) entries
+	if m.N > uint(len(m.Msgs)) {
+		i = m.N - uint(len(m.Msgs))
+		// missing messages
+		str = "...[" + strconv.Itoa(int(i)) + "]"
+	}
+	for ; i != m.N; i++ {
+		/*
+			if str != "" {
+				str += ","
+			}
+		*/
+		str += m.Msgs[int(i)%len(m.Msgs)].String()
+	}
+	return str
+}
+
+// debugging received msg "backtrace"
+// TODO: move it in a separate file and conditional compile
+type StateBackTrace struct {
+	PrevState [10]CallState // last 10 states
+	N         uint          // number of state transitions
+}
+
+func (s *StateBackTrace) Add(cs CallState) {
+	s.PrevState[int(s.N)%len(s.PrevState)] = cs
+	s.N++
+}
+
+func (s *StateBackTrace) String() string {
+	var i uint
+	var str string
+	// last len(prevState) entries
+	if s.N > uint(len(s.PrevState)) {
+		i = s.N - uint(len(s.PrevState))
+		// missing messages
+		str = "...[" + strconv.Itoa(int(i)) + "]"
+	}
+	for ; i != s.N; i++ {
+		if str != "" {
+			str += "->"
+		}
+		str += s.PrevState[int(i)%len(s.PrevState)].String()
+	}
+	return str
+}
+
 type CallEntry struct {
 	next, prev *CallEntry
 	Key        CallKey
@@ -599,12 +768,13 @@ type CallEntry struct {
 	forkedTS       time.Time // debugging
 	ReqsRetrNo     [2]uint
 	ReplsRetrNo    [2]uint
-	prevState      CallState       // debugging
-	lastMethod     sipsp.SIPMethod // last non-retr. method  in the "dialog"
-	lastReplStatus [2]uint16       // last non-retry. reply status seen
-	lastEv         EventType       // debugging: event before crtEv
-	crtEv          EventType       // debugging: most current event
-	evGen          EvGenPos        // debugging
+	lastMethod     [2]sipsp.SIPMethod // last non-retr. method  in the "dialog"
+	lastReplStatus [2]uint16          // last non-retry. reply status seen
+	prevState      StateBackTrace     // debugging
+	lastMsgs       MsgBackTrace       // debugging
+	lastEv         EventType          // debugging: event before crtEv
+	crtEv          EventType          // debugging: most current event
+	evGen          EvGenPos           // debugging
 
 	Timer  TimerInfo
 	refCnt int32 // reference counter, atomic

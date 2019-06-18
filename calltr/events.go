@@ -142,9 +142,9 @@ type EventData struct {
 	// debugging
 	ForkedTS   time.Time
 	State      CallState
-	PrevState  CallState
-	LastMethod sipsp.SIPMethod
-	LastStatus uint16
+	PrevState  StateBackTrace
+	LastMethod [2]sipsp.SIPMethod
+	LastStatus [2]uint16
 	LastEv     EventType
 	EvFlags    EventFlags
 	CFlags     CallFlags
@@ -154,6 +154,7 @@ type EventData struct {
 	Repls      [2]uint
 	ReqsRetr   [2]uint
 	ReplsRetr  [2]uint
+	LastMsgs   MsgBackTrace
 	FromTag    sipsp.PField
 	ToTag      sipsp.PField
 	EvGen      EvGenPos // where was the event generated
@@ -219,7 +220,7 @@ func (d *EventData) Fill(ev EventType, e *CallEntry) int {
 	d.State = e.State
 	d.PrevState = e.prevState
 	d.LastMethod = e.lastMethod
-	d.LastStatus = e.lastReplStatus[0]
+	d.LastStatus = e.lastReplStatus
 	d.LastEv = e.lastEv
 	d.EvFlags = e.EvFlags
 	d.CFlags = e.Flags
@@ -230,6 +231,7 @@ func (d *EventData) Fill(ev EventType, e *CallEntry) int {
 	d.Repls = e.ReplsNo
 	d.ReqsRetr = e.ReqsRetrNo
 	d.ReplsRetr = e.ReplsRetrNo
+	d.LastMsgs = e.lastMsgs
 	// end of debug
 
 	n = addPField(&e.Key.CallID, e.Key.buf,
@@ -293,7 +295,7 @@ func (ed *EventData) String() string {
 				CallAttrIdx(i), ed.Attrs[i].Get(ed.Buf))
 		}
 	}
-	s += fmt.Sprintf("	DBG: state: %q  pstate: %q\n", ed.State, ed.PrevState)
+	s += fmt.Sprintf("	DBG: state: %q  pstate: %q\n", ed.State, ed.PrevState.String())
 	s += fmt.Sprintf("	DBG: fromTag: %q toTag: %q\n",
 		ed.FromTag.Get(ed.Buf), ed.ToTag.Get(ed.Buf))
 	s += fmt.Sprintf("	DBG:  lastev: %q evF: %s (%2X) generated on: %s\n",
@@ -307,8 +309,9 @@ func (ed *EventData) String() string {
 		ed.ReplsRetr[0], ed.ReplsRetr[1])
 	s += fmt.Sprintf("	DBG: call flags: %s (0x%02x)\n",
 		ed.CFlags, int(ed.CFlags))
-	s += fmt.Sprintf("	DBG: last method: %s  last status:%d\n",
+	s += fmt.Sprintf("	DBG: last method: %v  last status:%v\n",
 		ed.LastMethod, ed.LastStatus)
+	s += fmt.Sprintf("	DBG: msg trace: %s\n", ed.LastMsgs.String())
 	return s
 }
 

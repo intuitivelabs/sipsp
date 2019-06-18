@@ -29,7 +29,7 @@ const (
 )
 
 var Method2Name [MOther + 1][]byte = [MOther + 1][]byte{
-	MUndef:     []byte("undefined"),
+	MUndef:     []byte(""),
 	MInvite:    []byte("INVITE"),
 	MAck:       []byte("ACK"),
 	MBye:       []byte("BYE"),

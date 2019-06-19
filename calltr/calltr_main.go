@@ -408,7 +408,15 @@ func ProcessMsg(m *sipsp.PSIPMsg, n *[2]NetInfo, f HandleEvF, evd *EventData, fl
 	case CallNoMatch:
 		if flags&CallStProcessNew != 0 {
 			// create new call state
-			e = newCallEntry(hashNo, 0, m, n, 0, f)
+			if !m.FL.Request() {
+				//  if entry is created from a reply, invert ip addresses
+				var endpoints [2]NetInfo
+				endpoints[0], endpoints[1] = n[1], n[0]
+				n = &endpoints
+				e = newCallEntry(hashNo, 0, m, n, 0, f)
+			} else {
+				e = newCallEntry(hashNo, 0, m, n, 0, f)
+			}
 			if e == nil {
 				DBG("ProcessMsg: newCallEntry() failed on NoMatch\n")
 				goto errorLocked

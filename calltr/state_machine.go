@@ -81,8 +81,10 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeout
 	}
 	switch mmethod {
 	case sipsp.MBye:
+		// TODO: accept BYE only for INV dialogs
 		newState = CallStBye
 		event = EvCallEnd // for extra reliability: both on BYE and BYE repl.
+		// force-update the timeout
 	case sipsp.MCancel:
 		switch prevState {
 		case CallStInit, CallStFInv, CallStEarlyDlg:
@@ -91,9 +93,10 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeout
 			// we will generate CallAttempt on timeout to allow
 			// catching late 2XXs
 			// event = EvCallAttempt
+			// force-update the timeout
 		default:
-			newState = prevState // ignore CANCEL, keep old state
-			toFlags = FTimerUpdGT
+			newState = prevState  // ignore CANCEL, keep old state
+			toFlags = FTimerUpdGT // don't reduce the timeout
 		}
 	default:
 		// INVITE, ACK or non-INVITE in-dialog
@@ -119,12 +122,14 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeout
 					// ACK can be to 2xx or to negative reply
 					// at this point (1st CallStFInv or CallStEarlyDlg)
 					// we can't tell => ignore
-					newState = prevState // keep the same state
+					newState = prevState  // keep the same state
+					toFlags = FTimerUpdGT // don't reduce the timeout
 				default:
 					// in-dialog request that's not ACK, CANCEL or BYE
 					// => probably we missed a 2xx => recover
 					newState = CallStEstablished
 					event = EvCallStart
+					toFlags = FTimerUpdGT // don't reduce the timeout
 				}
 			default:
 				// REGISTER hack: update timeout only if bigger then current
@@ -132,7 +137,6 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeout
 				//  catch REGISTER re-freshes), both for REGISTER refreshes
 				// and for other messages in the same "dialog" (e.g. OPTIONs)
 				if mmethod == sipsp.MRegister || e.Method == sipsp.MRegister {
-					toFlags = FTimerUpdGT
 					// update Contact...
 					if mmethod == sipsp.MRegister {
 						if mC := m.PV.Contacts.GetContact(0); mC != nil {
@@ -141,7 +145,8 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeout
 						}
 					}
 				}
-				newState = prevState // keep same state
+				toFlags = FTimerUpdGT // don't reduce the timeout
+				newState = prevState  // keep same state
 			}
 			goto end
 		} // else
@@ -174,7 +179,9 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeout
 				newState = prevState
 			}
 		case sipsp.MAck:
-			newState = prevState // keep state for ack
+			// ACK w/o to-tag .... should not happen
+			newState = prevState  // keep state for ack
+			toFlags = FTimerUpdGT // don't reduce the timeout
 		case sipsp.MRegister:
 			// REGISTER refresh hack: update timeout only if bigger
 			// then current (to allow keeping long-term REGISTER
@@ -194,10 +201,10 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeout
 			}
 		default:
 			if prevState != CallStInit && mmethod != e.Method {
-				toFlags = FTimerUpdGT
 				// another force-matched message that has
 				// a different method then the orig. message should
-				// not cause state changes
+				// not cause state changes or timeout reset
+				toFlags = FTimerUpdGT
 				newState = prevState // keep state
 			} else {
 				newState = CallStFNonInv
@@ -270,13 +277,17 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 		switch prevState {
 		case CallStInit, CallStFInv, CallStEarlyDlg:
 			// not 100% conformant, but more "compatible" with broken UAs
+			// force-reset the timeout
 			newState = CallStCanceled
 			event = EvCallAttempt
 		default:
-			newState = prevState // keep current state, ignore CANCEL repl.*/
+			newState = prevState  // keep current state, ignore CANCEL repl.*/
+			toFlags = FTimerUpdGT // don't reduce the timeout
 		}
 	case sipsp.MBye:
+		// TODO: accept BYE only for INV dialogs
 		newState = CallStByeReplied
+		// force-reset the timeout ...
 		event = EvCallEnd // ignore the actual BYE reply code
 	default:
 		switch {
@@ -315,14 +326,18 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 				// lifetime.
 				// Ignore also possible negative replies to OPTIONs (or
 				// other methods) sent in the same "dialog"
-				if (mmethod == sipsp.MRegister &&
-					(e.Flags&CFRegReplacedHack != 0)) ||
-					e.Method == sipsp.MRegister {
-					toFlags = FTimerUpdGT
-				}
-				newState = prevState // keep the current state
+				/*
+					if mmethod == sipsp.MRegister ||
+						e.Method == sipsp.MRegister {
+						toFlags = FTimerUpdGT
+					} */
+				// negative reply after 2xx, ignore, see the
+				// OPTIONS after REGISTER example above
+				toFlags = FTimerUpdGT // don't reduce the timeout
+				newState = prevState  // keep the current state
 			default:
-				newState = prevState // keep the current state
+				newState = prevState  // keep the current state
+				toFlags = FTimerUpdGT // don't reduce the timeout
 			}
 			// set event / handle auth. failure
 			if authFailure(mstatus) {
@@ -354,7 +369,7 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 						// if to == 0 it is either set explicitly to 0
 						// in the REGISTER or no Expires or Contact headers
 						// are present, in both case => delete
-						// note however that a REGISTER with a 0 expire
+						// note however that a REGISTER reply with a 0 expire
 						// contact is highly improbable.
 						if to == 0 {
 							// 0 timeout => it's a delete
@@ -371,7 +386,8 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 				event = EvCallStart
 			case CallStEstablished:
 				// do nothing
-				newState = prevState // keep the current state
+				newState = prevState  // keep the current state
+				toFlags = FTimerUpdGT // don't reduce the timeout
 			case CallStNonInvNegReply:
 				// allow 2xx after negative replies
 				fallthrough
@@ -386,13 +402,14 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 				if mmethod == sipsp.MRegister {
 					// REGISTER special HACK
 					event, to = handleRegRepl(e, m)
-				} else if e.Method == sipsp.MRegister {
-					// other message matching a REGISTER created entry
-					// e.g. OPTIONS
+				} else {
+					// e.g. other message matching a REGISTER created entry
+					// like OPTIONS sent by some UACs
 					toFlags = FTimerUpdGT
 				}
 			default:
-				newState = prevState // keep the current state
+				newState = prevState  // keep the current state
+				toFlags = FTimerUpdGT // don't reduce the timeout
 			}
 		case mstatus >= 101: // 101-199 early dialog
 			// 3 possible cases:

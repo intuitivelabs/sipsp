@@ -657,7 +657,7 @@ func (m *MsgBackTrace) AddReq(method sipsp.SIPMethod, dir, retr int) {
 		var mr MsgRec
 		mr.InitReq(method, dir, 0)
 		idx := int(m.N-1) % len(m.Msgs)
-		if m.Msgs[idx]&^MsgRecRetrMask == mr {
+		if m.Msgs[idx]&^MsgRecRetrMask == mr && m.Msgs[idx].Retrs() > 0 {
 			newRetr := m.Msgs[idx].Retrs() + retr
 			if newRetr > MsgRecMaxRetr {
 				retr -= (newRetr - MsgRecMaxRetr)
@@ -680,7 +680,7 @@ func (m *MsgBackTrace) AddRepl(status uint16, dir, retr int) {
 		var mr MsgRec
 		mr.InitRepl(status, dir, 0)
 		idx := int(m.N-1) % len(m.Msgs)
-		if m.Msgs[idx]&^MsgRecRetrMask == mr {
+		if m.Msgs[idx]&^MsgRecRetrMask == mr && m.Msgs[idx].Retrs() > 0 {
 			newRetr := m.Msgs[idx].Retrs() + retr
 			if newRetr > MsgRecMaxRetr {
 				retr -= (newRetr - MsgRecMaxRetr)

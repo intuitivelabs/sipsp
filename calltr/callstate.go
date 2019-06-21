@@ -218,7 +218,9 @@ const (
 	CFRegReplacedHack           // REGISTER re-use hack
 	CFForkChild
 	CFForkParent
-	CFCanceled // or fin reply recvd on some branch
+	CFCanceled       // CANCEL seem
+	CFInternalCancel // fin reply recv on some branch: internal cancel
+	CFTimeout
 )
 
 // debugging, keep in sync with the CallFlags consts above
@@ -229,6 +231,8 @@ var cfNames = [...]string{
 	"Fork_Parent",
 	"Fork_Child",
 	"Canceled",
+	"Internal_Cancel",
+	"Timeout",
 	"invalid",
 	"invalid",
 	"invalid",

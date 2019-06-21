@@ -64,6 +64,7 @@ func replRetr(e *CallEntry, m *sipsp.PSIPMsg, dir int) bool {
 // timeout flags and an EventType.
 // The EventType is not checked for uniqueness (e.g. several call-start could
 // be generated one-after-another if several 2xx arrive)
+// TODO: look at dir when deciding how/what to update
 // unsafe, MUST be called w/ lock held or if no parallel access is possible
 func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, TimeoutS, TimerUpdateF, EventType) {
 	mmethod := m.FL.MethodNo
@@ -81,10 +82,19 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeout
 	}
 	switch mmethod {
 	case sipsp.MBye:
-		// TODO: accept BYE only for INV dialogs
-		newState = CallStBye
-		event = EvCallEnd // for extra reliability: both on BYE and BYE repl.
-		// force-update the timeout
+		// accept BYE only for INV dialogs
+		switch prevState {
+		case CallStInit, CallStFInv, CallStEarlyDlg, CallStEstablished,
+			CallStNegReply:
+			newState = CallStBye
+			event = EvCallEnd // for extra reliability: both on BYE and BYE repl.
+			// force-update the timeout
+		case CallStBye, CallStByeReplied:
+			fallthrough // do nothing, keep state
+		default:
+			newState = prevState
+			toFlags = FTimerUpdGT // don't reduce the timeout
+		}
 	case sipsp.MCancel:
 		switch prevState {
 		case CallStInit, CallStFInv, CallStEarlyDlg:
@@ -124,14 +134,27 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeout
 					// we can't tell => ignore
 					newState = prevState  // keep the same state
 					toFlags = FTimerUpdGT // don't reduce the timeout
+				case sipsp.MNotify, sipsp.MUpdate, sipsp.MPrack:
+					// NOTIFY cannot be "trusted" some UAS send notifies
+					// on early dialog and it has nothing to do with the
+					// call.
+					// UPDATE is by definition used in early-dialog only and
+					// it does not signify any call establishment
+					// same for PRACK
+					newState = prevState  // keep the same state
+					toFlags = FTimerUpdGT // don't reduce the timeout
 				default:
-					// in-dialog request that's not ACK, CANCEL or BYE
+					// in-dialog request that's not ACK, PRACK, NOTIFY, UPDATE,
+					// CANCEL or BYE
 					// => probably we missed a 2xx => recover
 					newState = CallStEstablished
 					event = EvCallStart
 					toFlags = FTimerUpdGT // don't reduce the timeout
 				}
 			default:
+				// Established, NegReply, NonInvNegReply, NonInvFinished
+				// Canceled, BYE, BYE reply
+
 				// REGISTER hack: update timeout only if bigger then current
 				// (to allow keeping long-term REGISTER entry that will
 				//  catch REGISTER re-freshes), both for REGISTER refreshes
@@ -177,6 +200,7 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeout
 				// call-entries with to-tag!=""
 				// In this case update cseq, but keep state
 				newState = prevState
+				toFlags = FTimerUpdGT // don't reduce the timeout
 			}
 		case sipsp.MAck:
 			// ACK w/o to-tag .... should not happen
@@ -203,9 +227,11 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeout
 			if prevState != CallStInit && mmethod != e.Method {
 				// another force-matched message that has
 				// a different method then the orig. message should
-				// not cause state changes or timeout reset
-				toFlags = FTimerUpdGT
-				newState = prevState // keep state
+				// not cause state changes or timeout resets
+				// (note that CANCEL is caught above so we don't have to
+				//  worry about it here)
+				toFlags = FTimerUpdGT // allow timer increase but no dec.
+				newState = prevState  // keep state
 			} else {
 				newState = CallStFNonInv
 			}
@@ -252,6 +278,7 @@ retr: // retransmission or PRACK
 // TODO: event support for REGISTER (full with deletions and expires) and
 //      SUBSCRIBE/NOTIFY (requires extra parsing)
 // TODO: REG timeout = Max Expires, or if bad value 3600 (rfc3261) ??
+// TODO: look at dir when deciding how/what to update
 // unsafe, MUST be called w/ lock held or if no parallel access is possible
 func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, TimeoutS, TimerUpdateF, EventType) {
 	var to TimeoutS
@@ -269,7 +296,8 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 	// easier to handle them too in case of forked call-state)
 	if replRetr(e, m, dir) ||
 		mmethod == sipsp.MPrack /* ignore PRACKs */ ||
-		mmethod == sipsp.MUpdate /* ignore UPDATEs */ {
+		mmethod == sipsp.MUpdate /* ignore UPDATEs */ ||
+		mmethod == sipsp.MAck /* should never happen, but...*/ {
 		goto retr // retransmission
 	}
 	switch mmethod {
@@ -285,10 +313,19 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 			toFlags = FTimerUpdGT // don't reduce the timeout
 		}
 	case sipsp.MBye:
-		// TODO: accept BYE only for INV dialogs
-		newState = CallStByeReplied
-		// force-reset the timeout ...
-		event = EvCallEnd // ignore the actual BYE reply code
+		//  accept BYE only for INV dialogs
+		switch prevState {
+		case CallStInit, CallStFInv, CallStEarlyDlg, CallStEstablished,
+			CallStBye, CallStNegReply:
+			newState = CallStByeReplied
+			// force-reset the timeout ...
+			event = EvCallEnd // ignore the actual BYE reply code
+		case CallStByeReplied:
+			fallthrough // do nothing, keep state
+		default:
+			newState = prevState  // keep current state, ignore CANCEL repl.*/
+			toFlags = FTimerUpdGT // don't reduce the timeout
+		}
 	default:
 		switch {
 		case mstatus > 299:
@@ -309,13 +346,21 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 					// no event for non-INV. neg. replies
 				}
 			case CallStFInv, CallStEarlyDlg:
-				newState = CallStNegReply
-				// we might have here an auth. failure (and we want to
-				// report it only if we already seen one before on this
-				// dialog, handled below, outside the case:) or a failure
-				// of one of the branches (in which case we still want to
-				// wait to see if we get a 2xx -- we will report EvCallAttempt
-				// on timeout...)
+				if mmethod == sipsp.MInvite {
+					newState = CallStNegReply
+					// we might have here an auth. failure (and we want to
+					// report it only if we already seen one before on this
+					// dialog, handled below, outside the case:) or a failure
+					// of one of the branches (in which case we still want to
+					// wait to see if we get a 2xx -- we will report EvCallAttempt
+					// on timeout...)
+				} else {
+					// neg. reply, but not to the INVITE, (e.g. to an UPDATE
+					//  or PRACK) ignore...
+					// (BYE and CANCEL are handled above)
+					newState = prevState  // keep the current state
+					toFlags = FTimerUpdGT // don't reduce the timeout
+				}
 			case CallStFNonInv:
 				newState = CallStNonInvNegReply
 				// no event here
@@ -382,8 +427,17 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 				// replies with neg. reply, another with 200)
 				fallthrough
 			case CallStFInv, CallStEarlyDlg:
-				newState = CallStEstablished
-				event = EvCallStart
+				if mmethod == sipsp.MInvite {
+					newState = CallStEstablished
+					event = EvCallStart
+				} else {
+					// 2xx to some other in-dialog request
+					// BYE and CANCEL are handled above, we might have
+					// an UPDATE, PRACK or some strange early NOTIFY reply
+					// ignore ...
+					newState = prevState  // keep the current state
+					toFlags = FTimerUpdGT // don't reduce the timeout
+				}
 			case CallStEstablished:
 				// do nothing
 				newState = prevState  // keep the current state
@@ -392,10 +446,17 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 				// allow 2xx after negative replies
 				fallthrough
 			case CallStFNonInv:
-				newState = CallStNonInvFinished
-				if mmethod == sipsp.MRegister {
-					// REGISTER special HACK
-					event, to = handleRegRepl(e, m)
+				if mmethod == e.Method {
+					newState = CallStNonInvFinished
+					if mmethod == sipsp.MRegister {
+						// REGISTER special HACK
+						event, to = handleRegRepl(e, m)
+					}
+				} else {
+					// ignore, reply to something else, e.g. OPTIONS sent
+					// as pings alongside REGISTERs
+					newState = prevState  // keep the current state
+					toFlags = FTimerUpdGT // don't reduce the timeout
 				}
 			case CallStNonInvFinished:
 				newState = prevState // keep the current state
@@ -502,6 +563,7 @@ func finalTimeoutEv(e *CallEntry) EventType {
 	var forcedStatus uint16
 	var forcedReason *[]byte
 	event := EvNone
+	e.Flags |= CFTimeout
 	switch e.State {
 	case CallStFInv: // un-replied INVITE, timeout
 		event = EvCallAttempt

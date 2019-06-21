@@ -188,7 +188,12 @@ func (ed *EventData) Copy(src *EventData) bool {
 	return true
 }
 
+var fakeCancelReason = []byte("internal: cancel")
+var fakeTimeoutReason = []byte("internal: call state timeout")
+var fake2xxReason = []byte("internal: implied OK")
+
 func (d *EventData) Fill(ev EventType, e *CallEntry) int {
+	var forcedReason []byte
 	d.Type = ev
 	d.Truncated = false
 	d.TS = time.Now()
@@ -214,6 +219,30 @@ func (d *EventData) Fill(ev EventType, e *CallEntry) int {
 	d.SPort = e.EndPoint[0].Port
 	d.DPort = e.EndPoint[1].Port
 	d.ReplStatus = e.ReplStatus[0]
+	// fix ReplStatus
+	if d.ReplStatus < 200 {
+		if e.Flags&CFTimeout != 0 {
+			// if call entry did timeout start with a fake 408
+			d.ReplStatus = 408
+			forcedReason = fakeTimeoutReason
+		}
+		switch ev {
+		case EvCallStart:
+			// call reconstructed due to in-dialog method
+			d.ReplStatus = 290
+			forcedReason = fake2xxReason
+		case EvCallAttempt:
+			switch e.State {
+			case CallStCanceled:
+				d.ReplStatus = 487 // fake 487
+				forcedReason = fakeCancelReason
+			default:
+			}
+		case EvCallEnd:
+			d.ReplStatus = 291
+			forcedReason = fake2xxReason
+		}
+	}
 
 	//debug stuff
 	d.ForkedTS = e.forkedTS
@@ -241,7 +270,27 @@ func (d *EventData) Fill(ev EventType, e *CallEntry) int {
 		return d.Valid
 	}
 	d.Valid++
+	// add Reason "by-hand"
+	if forcedReason != nil {
+		n = addSlice(forcedReason,
+			&d.Attrs[AttrReason], &d.Buf, &d.Used, -1)
+		if n < len(forcedReason) {
+			d.Truncated = true
+			return d.Valid
+		}
+	} else {
+		n = addPField(&e.Info.Attrs[AttrReason], e.Info.buf,
+			&d.Attrs[AttrReason], &d.Buf, &d.Used, -1)
+		if n != int(e.Info.Attrs[AttrReason].Len) {
+			d.Truncated = true
+			return d.Valid
+		}
+	}
+	d.Valid++
 	for i := 0; i < len(d.Attrs); i++ {
+		if CallAttrIdx(i) == AttrReason {
+			continue // skip, Reason handled above
+		}
 		n = addPField(&e.Info.Attrs[i], e.Info.buf,
 			&d.Attrs[i], &d.Buf, &d.Used, -1)
 		if n != int(e.Info.Attrs[i].Len) {

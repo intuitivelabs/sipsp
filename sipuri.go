@@ -90,9 +90,28 @@ func (u *PsipURI) Reset() {
 	*u = PsipURI{}
 }
 
-// Shortened returns a "short" uri form, good for comparisons.
+// Flat returns a byte slices containing the uri in "string" form.
+func (u *PsipURI) Flat(buf []byte) []byte {
+
+	var r PField
+
+	if u.Headers.Len > 0 {
+		r.Set(int(u.Scheme.Offs), int(u.Headers.Offs+u.Headers.Len))
+	} else if u.Pass.Len > 0 {
+		r.Set(int(u.Scheme.Offs), int(u.Params.Offs+u.Params.Len))
+	} else if u.Port.Len > 0 {
+		r.Set(int(u.Scheme.Offs), int(u.Port.Offs+u.Port.Len))
+	} else if u.Host.Len > 0 {
+		r.Set(int(u.Scheme.Offs), int(u.Host.Offs+u.Host.Len))
+	} else if u.User.Len > 0 {
+		r.Set(int(u.Scheme.Offs), int(u.User.Offs+u.User.Len))
+	}
+	return r.Get(buf)
+}
+
+// Short returns a "shortened" uri form, good for comparisons.
 // no parameters or headers are included
-func (u *PsipURI) Shortened() PField {
+func (u *PsipURI) Short() PField {
 	var r PField
 
 	if u.Port.Len > 0 {
@@ -103,6 +122,49 @@ func (u *PsipURI) Shortened() PField {
 		r.Set(int(u.Scheme.Offs), int(u.User.Offs+u.User.Len))
 	}
 	return r
+}
+
+// Truncate "shortens" a parsed uri, by removing the parameters and headers
+func (u *PsipURI) Truncate() {
+	u.Params.Reset()
+	u.Headers.Reset()
+}
+
+func (u *PsipURI) AdjustOffs(newpos PField) bool {
+	offs := newpos.Offs // new start
+	end := offs + newpos.Len
+	if (u.Scheme.Len + u.User.Len + u.Pass.Len + u.Host.Len + u.Port.Len +
+		u.Params.Len + u.Headers.Len) > newpos.Len {
+		DBG("AdjustOffs: %d > %d\n", u.Scheme.Len+u.User.Len+u.Pass.Len+u.Host.Len+u.Port.Len+u.Params.Len+u.Headers.Len, newpos.Len)
+		return false
+	}
+	start := u.Scheme.Offs
+	last := offs
+	u.Scheme.Offs = offs
+	if u.User.Offs != 0 {
+		u.User.Offs = u.User.Offs - start + offs
+		last = u.User.Offs + u.User.Len
+	}
+	if u.Pass.Offs != 0 {
+		u.Pass.Offs = u.Pass.Offs - start + offs
+		last = u.Pass.Offs + u.Pass.Len
+	}
+	if u.Host.Offs != 0 {
+		u.Host.Offs = u.Host.Offs - start + offs
+		last = u.Host.Offs + u.Host.Len
+	}
+	if u.Port.Offs != 0 {
+		u.Port.Offs = u.Port.Offs - start + offs
+		last = u.Port.Offs + u.Port.Len
+	}
+	if u.Headers.Offs != 0 {
+		u.Headers.Offs = u.Headers.Offs - start + offs
+		last = u.Headers.Offs + u.Headers.Len
+	}
+	if last > end {
+		panic("PsipURI.AdjustOffs: offset past end")
+	}
+	return true
 }
 
 // CmpShort compares 2 "shortened" uris (up to port, not including parameters

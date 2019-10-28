@@ -1,6 +1,6 @@
-package calltr
-
 //+build alloc_oneblock
+
+package calltr
 
 import (
 	"log"
@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"unsafe"
 )
+
+const AllocCallsPerEntry = 1
 
 // Alloc functions that try to allocate Entry and buffer(s) into one
 // single contiguous memory block. Conditionally compiled.

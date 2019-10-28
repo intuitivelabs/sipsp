@@ -4,7 +4,8 @@ import (
 	"sync/atomic"
 )
 
-const AllocRoundTo = 8
+const AllocRoundTo = 16
+const MemPoolsNo = 1024
 
 type StatCounter uint64
 
@@ -25,7 +26,9 @@ type AllocStats struct {
 	NewCalls  StatCounter
 	FreeCalls StatCounter
 	Failures  StatCounter
-	Sizes     [1024]StatCounter
+	Sizes     [MemPoolsNo + 1]StatCounter
+	PoolHits  [MemPoolsNo]StatCounter
+	PoolMiss  [MemPoolsNo]StatCounter
 }
 
 var CallEntryAllocStats AllocStats

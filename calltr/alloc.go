@@ -1,3 +1,5 @@
+//+build default !alloc_pool,!alloc_oneblock
+
 package calltr
 
 import (
@@ -7,7 +9,9 @@ import (
 	"unsafe"
 )
 
-// AllocCallEntry allocates a CallEntry and the CalLEntry.Key.buf in one block.
+const AllocCallsPerEntry = 2
+
+// AllocCallEntry allocates a CallEntry and the corresp. CallEntry.Key.buf.
 // The Key.buf will be keySize bytes length and info.buf infoSize.
 // It might return nil if the memory limits are exceeded.
 // Note: this version allocates a separate CallEntry and buffer which is not
@@ -18,13 +22,16 @@ func AllocCallEntry(keySize, infoSize uint) *CallEntry {
 	callEntrySize := uint(unsafe.Sizeof(*n))
 	totalBufSize := keySize + infoSize
 	totalBufSize = ((totalBufSize-1)/AllocRoundTo + 1) * AllocRoundTo //round up
-	// TODO: use multiple of block-size blocks and pools for each block size
 	buf := make([]byte, totalBufSize)
 	if buf == nil {
 		CallEntryAllocStats.Failures.Inc(1)
 		return nil
 	}
 	n = new(CallEntry)
+	if n == nil {
+		CallEntryAllocStats.Failures.Inc(1)
+		return nil
+	}
 	// DBG: extra debugging: when about to be garbage collected, check if
 	// the entry was marked as free from FreeCallEntry(), otherwise report
 	// a BUG.
@@ -87,8 +94,7 @@ func AllocRegEntry(bufSize uint) *RegEntry {
 	RegEntryAllocStats.NewCalls.Inc(1)
 	totalSize := bufSize
 	totalSize = ((totalSize-1)/AllocRoundTo + 1) * AllocRoundTo // round up
-	// TODO: use multiple of block-size blocks and pools for each block size
-	buf := make([]byte, totalSize) //?allignment (seems to be always ok)
+	buf := make([]byte, totalSize)
 	if buf == nil {
 		RegEntryAllocStats.Failures.Inc(1)
 		return nil
@@ -141,5 +147,4 @@ func FreeRegEntry(e *RegEntry) {
 	*e = RegEntry{}           // DBG: zero it to force crashes on re-use w/o alloc
 	e.hashNo = ^uint32(0) - 1 // DBG: set invalid hash
 	RegEntryAllocStats.TotalSize.Dec(uint(totalSize))
-	// TODO: put it back in the corresp. pool
 }

@@ -138,7 +138,9 @@ func csTimerStartUnsafe(cs *CallEntry) bool {
 	callstTimer := func() {
 		now := time.Now()
 		// allow for small errors
+		cstHash.HTable[cs.hashNo].Lock()
 		expire := cs.Timer.Expire.Add(-time.Second / 10) // sub sec/10
+		cstHash.HTable[cs.hashNo].Unlock()
 		if expire.Before(now) || expire.Equal(now) {
 			ev := EvNone
 			var evd *EventData
@@ -181,7 +183,9 @@ func csTimerStartUnsafe(cs *CallEntry) bool {
 		for atomic.LoadPointer(handleAddr) == nil {
 			runtime.Gosched()
 		}
+		cstHash.HTable[cs.hashNo].Lock()
 		cs.Timer.Handle.Reset(cs.Timer.Expire.Sub(now))
+		cstHash.HTable[cs.hashNo].Unlock()
 	}
 
 	// sanity checks

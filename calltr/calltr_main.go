@@ -29,9 +29,77 @@ type Config struct {
 var Cfg Config
 
 var cstHash CallEntryHash
+var regHash RegEntryHash
 
 func init() {
 	cstHash.Init(HashSize)
+	regHash.Init(HashSize)
+}
+
+// Locks a CallEntry.
+// For now it locks the corresp. hash bucket list in the global cstHash.
+// Returns true if successful, false if not (entry not linked in any list).
+// Warning: since it locks cstHash[e.hashNo] there is a deadlock
+//          if more then one entry with the same hash are locked from the
+//          same thread.
+func lockCallEntry(e *CallEntry) bool {
+
+	h := e.hashNo
+	if h < uint32(len(cstHash.HTable)) && (e.next != e) {
+		cstHash.HTable[h].Lock()
+		// check if not un-linked in the meantime
+		if h != e.hashNo || (e.next == e) {
+			cstHash.HTable[h].Unlock()
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+// Unlocks a CallEntry.
+// Returns false if it fails (invalid CallEntry hashNo).
+// See also lockCallEntry()
+func unlockCallEntry(e *CallEntry) bool {
+	h := e.hashNo
+	if h < uint32(len(cstHash.HTable)) {
+		cstHash.HTable[h].Unlock()
+		return true
+	}
+	return false
+}
+
+// Locks a RegEntry.
+// For now it locks the corresp. hash bucket list in the global regHash.
+// Returns true if successful, false if not (entry not linked in any list).
+// Warning: since it locks regHash[r.hashNo] there is a deadlock
+//          if more then one entry with the same hash are locked from the
+//          same thread.
+func lockRegEntry(r *RegEntry) bool {
+
+	h := r.hashNo
+	if h < uint32(len(regHash.HTable)) && (r.next != r) {
+		regHash.HTable[h].Lock()
+		// check if not un-linked in the meantime
+		if h != r.hashNo || (r.next == r) {
+			regHash.HTable[h].Unlock()
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+// Unlocks a RegEntry.
+// Returns false if it fails (invalid RegEntry hashNo).
+// See also lockRegEntry()
+func unlockRegEntry(r *RegEntry) bool {
+	h := r.hashNo
+	if h < uint32(len(regHash.HTable)) {
+		regHash.HTable[h].Unlock()
+		return true
+	}
+	return false
 }
 
 // alloc & init a new call entry.
@@ -366,6 +434,50 @@ func addCallEntryUnsafe(e *CallEntry, m *sipsp.PSIPMsg, dir int) (bool, EventTyp
 	return true, ev
 }
 
+// unlinkCallEntryUnsafe removes a CallEntry from the tracked calls.
+// It removes it both from the CallEntry hash and the corresp. RegCache
+// entry (if present). If unref is false it will still keep a ref. to
+// the CallEntry.
+// It returns true if the entry was removed from the hash, false if not
+// (already removed)
+// WARNING: the proper hash lock must be already held.
+func unlinkCallEntryUnsafe(e *CallEntry, unref bool) bool {
+	re := e.regBinding
+	unlinked := false
+	if !cstHash.HTable[e.hashNo].Detached(e) {
+		cstHash.HTable[e.hashNo].Rm(e)
+		cstHash.HTable[e.hashNo].DecStats()
+		unlinked = true
+	}
+	if re != nil {
+		h := re.hashNo
+		rm := false
+		//DBG("unlinkCallEntryUnsafe: re: %p re->ce: %p refCnt: %d e: %p e refCnt: %d h: %d\n", re, re.ce, re.refCnt, e, e.refCnt, h)
+		regHash.HTable[h].Lock()
+		if !regHash.HTable[h].Detached(re) {
+			regHash.HTable[h].Rm(re)
+			regHash.HTable[h].DecStats()
+			rm = true
+		}
+		if re.ce == e {
+			re.ce = nil
+			if unlinked || unref {
+				e.Unref()
+			}
+		} // else somebody changed/removed the link => bail out
+		e.regBinding = nil
+		re.Unref()
+		regHash.HTable[h].Unlock()
+		if rm {
+			re.Unref()
+		}
+	}
+	if unref && unlinked {
+		e.Unref()
+	}
+	return unlinked
+}
+
 // ProcessMsg tries to match a sip msg against stored call state.
 // Depending on flags it will update the call state based on msg, create
 // new call entries if needed a.s.o.
@@ -404,7 +516,6 @@ func ProcessMsg(m *sipsp.PSIPMsg, n *[2]NetInfo, f HandleEvF, evd *EventData, fl
 		int(m.PV.Callid.CallID.Offs), int(m.PV.Callid.CallID.Len))
 
 	cstHash.HTable[hashNo].Lock()
-	defer cstHash.HTable[hashNo].Unlock()
 
 	e, match, dir := cstHash.HTable[hashNo].Find(m.PV.Callid.CallID.Get(m.Buf),
 		m.PV.From.Tag.Get(m.Buf),
@@ -493,14 +604,38 @@ func ProcessMsg(m *sipsp.PSIPMsg, n *[2]NetInfo, f HandleEvF, evd *EventData, fl
 		log.Panicf("calltr.ProcessMsg: unexpected match type %d\n", match)
 	}
 endLocked:
-	// cstHash.HTable[hashNo].Unlock()
+	// update regCache
+	if ev == EvRegNew || ev == EvRegDel || ev == EvRegExpired {
+		a := m.PV.GetTo().URI.Get(m.Buf) // byte slice w/ To uri
+		c := e.Info.Attrs[AttrContact].Get(e.Info.buf)
+		aor := make([]byte, len(a))
+		contact := make([]byte, len(c))
+		copy(aor, a)
+		copy(contact, c)
+		if len(aor) != 0 && len(contact) != 0 {
+			cstHash.HTable[hashNo].Unlock()
+			_, ev = updateRegCache(ev, e, aor, contact)
+			cstHash.HTable[hashNo].Lock()
+		} else {
+			ev = EvNone
+			BUG("calltr.ProcessMsg: emty aor (%q) or contact(%q) for %p:"+
+				" ev %d (%q last %q prev) state %q (%q) prev msgs %q "+
+				"cid %q msg:\n%q\n",
+				aor, contact, ev, ev.String(),
+				e.crtEv.String(), e.lastEv.String(),
+				e.State.String(), e.prevState.String(),
+				e.lastMsgs.String(),
+				e.Key.GetCallID(), m.Buf)
+		}
+	}
 	if ev != EvNone && evd != nil {
 		// event not seen before, report...
 		evd.Fill(ev, e)
 	}
+	cstHash.HTable[hashNo].Unlock()
 	return e, match, dir, ev
 errorLocked:
-	// cstHash.HTable[hashNo].Unlock()
+	cstHash.HTable[hashNo].Unlock()
 	DBG("ProcessMsg: returning CallErrMatch\n")
 	return nil, CallErrMatch, 0, EvNone
 }
@@ -524,18 +659,229 @@ func Track(m *sipsp.PSIPMsg, n *[2]NetInfo, f HandleEvF) bool {
 	return match != CallErrMatch
 }
 
+// updateRegCache creates/deletes RegCache binding entries in function of
+// the event and CallEntry. It returns true for success, false for error and
+// an updated EventType.
+// WARNING: safe version, it must be called with the corresp. CallEntry hash
+// bucket UNlocked and with a reference held to e.
+func updateRegCache(event EventType, e *CallEntry, aor []byte, c []byte) (bool, EventType) {
+	var aorURI sipsp.PsipURI
+	var cURI sipsp.PsipURI
+	err1, _ := sipsp.ParseURI(aor, &aorURI)
+	err2, _ := sipsp.ParseURI(c, &cURI)
+	if err1 != 0 || err2 != 0 {
+		return false, EvNone
+	}
+
+	switch event {
+	case EvRegNew:
+		cstHash.HTable[e.hashNo].Lock()
+		if e.regBinding == nil {
+			hURI := aorURI.Short() // hash only on sch:user@host:port
+			h := regHash.Hash(aor, int(hURI.Offs), int(hURI.Len))
+
+			// alloc and fill new reg entry cache for "this" CallEntry
+			// We do this even if a cached entry (aor, contact) already exists,
+			// because that case does not happen often and this way the code
+			// is simpler and faster (the other version would require
+			// "stealing" the cached entry from the attached CallEntry and
+			// attaching it to the current CallEntry => way more complex for
+			// a very little memory usage gain).
+			nRegE := newRegEntry(&aorURI, aor, &cURI, c)
+			if nRegE != nil {
+				nRegE.Ref()
+				e.Ref()
+				nRegE.ce = e
+				e.regBinding = nRegE
+				nRegE.hashNo = h
+			}
+			// check if the current binding is not in the cache
+			var ce *CallEntry
+			regHash.HTable[h].Lock()
+			rb := regHash.HTable[h].FindBindingUnsafe(&aorURI, aor, &cURI, c)
+			if rb != nil {
+				// if cached entry (aor, contact) found => this is a REG with diff.
+				//   CallId for an // existing aor,contact pair => do not generate
+				// an EvRegNew
+				event = EvNone
+				// remove from hash
+				regHash.HTable[h].Rm(rb)
+				regHash.HTable[h].DecStats()
+				ce = rb.ce
+				rb.ce = nil // unref ce latter
+				rb.Unref()  // no longer in the hash
+				// later generate a quick expire for the  linked CallEntry
+			}
+			if nRegE != nil {
+				// add the new reg entry to the hash
+				regHash.HTable[h].Insert(nRegE)
+				regHash.HTable[h].IncStats()
+				nRegE.Ref()
+			}
+			regHash.HTable[h].Unlock()
+			cstHash.HTable[e.hashNo].Unlock()
+			//  generate a quick expire for the linked CallEntry
+			// (if previous entry found)
+			if ce != nil {
+				cstHash.HTable[ce.hashNo].Lock()
+				if ce.regBinding == rb {
+					ce.regBinding = nil
+					if !cstHash.HTable[ce.hashNo].Detached(ce) {
+						//  force short delete timeout
+						csTimerUpdateTimeoutUnsafe(ce,
+							time.Duration(ce.State.TimeoutS())*time.Second,
+							FTimerUpdForce)
+						//  update ev. flags
+						ce.EvFlags.Set(EvRegDel)
+						ce.lastEv = EvRegDel
+					} // else already detached on waiting for 0 refcnt => nop
+					rb.Unref() // no longer ref'ed from the CallEntry
+				} // else somebody already removed ce.regBinding => bail out
+				cstHash.HTable[ce.hashNo].Unlock()
+				ce.Unref() // no longer ref'ed from the RegEntry
+			}
+
+			if nRegE == nil {
+				ERR("failed to allocate new RegEntry for (%q->%q)\n", aor, c)
+				return false, event
+			}
+		} else { // e.regBinidng != nil
+			// reg binding already exists and attached to this CallEntry =>
+			// no EvRegNew
+			cstHash.HTable[e.hashNo].Unlock()
+			event = EvNone
+		}
+	case EvRegDel:
+		// if a RegEntry is attached to the current CallEntry, delete it
+		cstHash.HTable[e.hashNo].Lock()
+		rb := e.regBinding
+		if rb != nil {
+			h := rb.hashNo
+			regHash.HTable[h].Lock()
+			if !regHash.HTable[h].Detached(rb) {
+				regHash.HTable[h].Rm(rb)
+				regHash.HTable[h].DecStats()
+				rb.ce = nil
+				rb.Unref() // no longer in the hash
+			}
+			regHash.HTable[h].Unlock()
+			e.regBinding = nil
+			rb.Unref() // no longer ref'ed from the CallEntry
+			e.Unref()  // no longer ref'ed from the RegEntry
+		}
+		cstHash.HTable[e.hashNo].Unlock()
+		// extra safety: delete all other matching reg bindings
+		// (if we did see all the registers there shouldn't be any left)
+
+		hURI := aorURI.Short() // hash only on sch:user@host:port
+		h := regHash.Hash(aor, int(hURI.Offs), int(hURI.Len))
+		for {
+			regHash.HTable[h].Lock()
+			if len(c) == 1 && c[0] == '*' {
+				// "*" contact - everything was deleted -> remove all contacts
+				// for the AOR
+				rb = regHash.HTable[h].FindURIUnsafe(&aorURI, aor)
+			} else {
+				rb = regHash.HTable[h].FindBindingUnsafe(&aorURI, aor, &cURI, c)
+			}
+			if rb == nil {
+				regHash.HTable[h].Unlock()
+				break
+			}
+			regHash.HTable[h].Rm(rb)
+			regHash.HTable[h].DecStats()
+			ce := rb.ce
+			rb.ce = nil
+			regHash.HTable[h].Unlock()
+			rb.Unref() // no longer in the hash
+			if ce != nil {
+				cstHash.HTable[ce.hashNo].Lock()
+				if ce.regBinding == rb {
+					ce.regBinding = nil
+					if !cstHash.HTable[ce.hashNo].Detached(ce) {
+						//  force short delete timeout
+						csTimerUpdateTimeoutUnsafe(ce,
+							time.Duration(ce.State.TimeoutS())*time.Second,
+							FTimerUpdForce)
+						//  update ev. flags
+						ce.EvFlags.Set(event)
+						ce.lastEv = event
+					} // else already detached on waiting for 0 refcnt =>
+					// do nothing
+					rb.Unref() // no longer ref'ed from the CallEntry
+				} // else somebody changed ce.regBinding in the meantime => bail out
+				cstHash.HTable[ce.hashNo].Unlock()
+				ce.Unref() // no longer ref'ed from the RegEntry
+			}
+		}
+	case EvRegExpired:
+		// nothing to do: from finalTimeoutEv we generate EvRegExpired only
+		// if no EvRegDel was previously generated (corresp. CallEntry flag
+		// set). Since we always set EvRegDel for "old" entries on RegNew or
+		// for deleted entries on a EvRegDel -> nothing to do here.
+	}
+
+	return true, event
+}
+
+// newRegEntry allocates & fills a new reg cache entry.
+// It returns the new entry (allocated using AllocRegEntry()) or nil.
+func newRegEntry(aorURI *sipsp.PsipURI, aor []byte, cURI *sipsp.PsipURI, c []byte) *RegEntry {
+	size := len(aor) + len(c) // TODO: shorter version, w/o params ?
+	nRegE := AllocRegEntry(uint(size))
+	if nRegE == nil {
+		ERR("newRegEntry: Alloc failure\n")
+		return nil
+	}
+
+	if !nRegE.SetAOR(aorURI, aor) ||
+		!nRegE.SetContact(cURI, c) {
+		ERR("newRegEntry: Set* failure\n")
+		FreeRegEntry(nRegE)
+		return nil
+	}
+	//DBG("newRegEntry (aorURI: %q [%q], contactURI: %q [%q]) => %p (%q, %q)\n", aorURI.Flat(aor), aor, cURI.Flat(c), c, nRegE, nRegE.AORURI.Flat(nRegE.buf), nRegE.ContactURI.Flat(nRegE.buf))
+	return nRegE
+}
+
 type HStats struct {
 	Total uint64
 	Max   uint64
 	Min   uint64
 }
 
-func StatsHash(hs *HStats) uint64 {
+func CallEntriesStatsHash(hs *HStats) uint64 {
 	var total uint64
 	var max uint64
 	var min uint64
 	for i := 0; i < len(cstHash.HTable); i++ {
+		cstHash.HTable[i].Lock()
 		n := uint64(cstHash.HTable[i].entries)
+		cstHash.HTable[i].Unlock()
+		total += n
+		if n > max {
+			max = n
+		}
+		if n < min {
+			min = n
+		}
+	}
+	if hs != nil {
+		hs.Total = total
+		hs.Max = max
+		hs.Min = min
+	}
+	return total
+}
+
+func RegEntriesStatsHash(hs *HStats) uint64 {
+	var total uint64
+	var max uint64
+	var min uint64
+	for i := 0; i < len(regHash.HTable); i++ {
+		regHash.HTable[i].Lock()
+		n := uint64(regHash.HTable[i].entries)
+		regHash.HTable[i].Unlock()
 		total += n
 		if n > max {
 			max = n
@@ -593,6 +939,8 @@ const (
 	FilterToTag
 	FilterCallKey
 	FilterState
+	FilterAOR
+	FilterContact
 )
 
 func matchCallEntry(e *CallEntry, op int, b []byte, re *regexp.Regexp) bool {
@@ -612,6 +960,22 @@ func matchCallEntry(e *CallEntry, op int, b []byte, re *regexp.Regexp) bool {
 		}
 	case FilterState:
 		src = []byte(e.State.String())
+	default:
+		return false
+	}
+	if re != nil {
+		return re.Match(src)
+	}
+	return bytes.Contains(src, b)
+}
+
+func matchRegEntry(r *RegEntry, op int, b []byte, re *regexp.Regexp) bool {
+	var src []byte
+	switch op {
+	case FilterAOR:
+		src = r.AOR.Get(r.buf)
+	case FilterContact:
+		src = r.Contact.Get(r.buf)
 	default:
 		return false
 	}
@@ -642,7 +1006,7 @@ func PrintCallsFilter(w io.Writer, start, max int, op int, cid []byte, re *regex
 					" last method: %s:%s last status %3d"+
 					" msg trace: %q"+
 					" state trace: %q"+
-					" refcnt: %d expire: %ds\n",
+					" refcnt: %d expire: %ds regcache: %p\n",
 					n, e.Key.GetCallID(), e.Key.GetFromTag(),
 					e.Key.GetToTag(), e.Method, e.State, e.CSeq[0], e.CSeq[1],
 					e.ReplStatus[0], e.ReplStatus[1],
@@ -652,8 +1016,51 @@ func PrintCallsFilter(w io.Writer, start, max int, op int, cid []byte, re *regex
 					e.lastMethod[0], e.lastMethod[1], e.lastReplStatus,
 					e.lastMsgs.String(),
 					e.prevState.String(),
-					e.refCnt, e.Timer.Expire.Sub(time.Now())/time.Second)
+					e.refCnt, e.Timer.Expire.Sub(time.Now())/time.Second,
+					e.regBinding)
+				if e.regBinding != nil {
+					lockRegEntry(e.regBinding)
+					fmt.Fprintf(w, "       REG Binding; %q -> %q (refcnt %d)\n",
+						e.regBinding.AOR.Get(e.regBinding.buf),
+						e.regBinding.Contact.Get(e.regBinding.buf),
+						e.regBinding.refCnt)
+					unlockRegEntry(e.regBinding)
+				}
 				printed++
+			}
+			n++
+			if printed > max {
+				lst.Unlock()
+				return
+			}
+		}
+		lst.Unlock()
+	}
+}
+
+func PrintRegBindingsFilter(w io.Writer, start, max int, op int,
+	cid []byte, re *regexp.Regexp) {
+	n := 0
+	printed := 0
+	for i := 0; i < len(regHash.HTable); i++ {
+		lst := &regHash.HTable[i]
+		lst.Lock()
+		for r := lst.head.next; r != &lst.head; r = r.next {
+			print := false
+			if op == FilterNone || (re == nil && len(cid) == 0) {
+				print = true
+			} else {
+				print = matchRegEntry(r, op, cid, re)
+			}
+			if print && n >= start {
+				fmt.Fprintf(w, "%6d. REG Binding: %q -> %q (refcnt %d "+
+					"CallEntry: %p)\n",
+					n,
+					r.AOR.Get(r.buf),
+					r.Contact.Get(r.buf),
+					r.refCnt, r.ce)
+				printed++
+				// TODO: print linked CallEntry -> locking ?
 			}
 			n++
 			if printed > max {

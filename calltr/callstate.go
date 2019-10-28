@@ -782,6 +782,11 @@ type CallEntry struct {
 	EvFlags    EventFlags // sent/generated events
 	evHandler  HandleEvF  // event handler function
 
+	// used only for REGISTERS:
+	regBinding *RegEntry // pointer to cached registry binding
+
+	// TODO: replace all time.Time with uint64 (time.Time is too big and
+	//       has a time zone _pointer_ inside causing extra uneeded GC work)
 	StartTS        time.Time // call established time
 	CreatedTS      time.Time // debugging
 	forkedTS       time.Time // debugging
@@ -830,6 +835,23 @@ func (c *CallEntry) Ref() int32 {
 // Returns true if the CallEntry was freed and false if it's still referenced
 func (c *CallEntry) Unref() bool {
 	if atomic.AddInt32(&c.refCnt, -1) == 0 {
+		// sanity regBinding check
+		if c.regBinding != nil {
+			// NOTE: if refCnt is 0 then c.regBinding should be always nil
+			// otherwise c should be still ref'ed from the reg cache entry
+			// and the refCnt would not be 0
+			BUG("CallEntry.Unref(): 0 refCnt but still linked "+
+				"from regBinding cache: %p <- %p [%v]\n",
+				c, c.regBinding, *c.regBinding)
+			// Failsafe: even in the "buggy" case attempt to "recover"
+			// lock, & try to remove regBinding
+			locked := lockRegEntry(c.regBinding)
+			c.regBinding.ce = nil
+			if locked {
+				unlockRegEntry(c.regBinding)
+			}
+			c.regBinding.Unref()
+		}
 		FreeCallEntry(c)
 		return true
 	}

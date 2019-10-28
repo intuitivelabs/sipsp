@@ -155,10 +155,9 @@ func csTimerStartUnsafe(cs *CallEntry) bool {
 			// check again, in case we are racing with an Update
 			expire := cs.Timer.Expire.Add(-time.Second / 10) // sub sec/10
 			if expire.Before(now) || expire.Equal(now) {
-				cstHash.HTable[cs.hashNo].Rm(cs)
-				cstHash.HTable[cs.hashNo].DecStats()
+				// remove from the hashes, but still keep a ref.
+				removed = unlinkCallEntryUnsafe(cs, false)
 				atomic.StoreInt32(&cs.Timer.done, 1)
-				removed = true
 				ev = finalTimeoutEv(cs)
 				if ev != EvNone && evd != nil {
 					// event not seen before, report...

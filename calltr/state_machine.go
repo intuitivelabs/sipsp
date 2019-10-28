@@ -1,8 +1,6 @@
 package calltr
 
 import (
-	"time"
-
 	"andrei/sipsp"
 	"andrei/sipsp/bytescase"
 )

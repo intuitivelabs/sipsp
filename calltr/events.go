@@ -317,6 +317,82 @@ func (d *EventData) Fill(ev EventType, e *CallEntry) int {
 	return d.Valid
 }
 
+/*
+// Fill EventData from a RegEntry. Only valid for evRegExpired for now.
+// Returns the number of PFields added. For a valid event, at least 1.
+func (d *EventData) FillFromRegEntry(ev EventType, e *RegEntry) int {
+	var forcedReason []byte
+	d.Type = ev
+	d.Truncated = false
+	d.TS = time.Now()
+	d.CreatedTS = e.CreatedTS
+	d.StartTS = e.CreatedTS // for a RegEntry these are the same
+	d.ProtoF = e.EndPoint[0].Proto()
+	ip := e.EndPoint[0].IP()
+	n := copy(d.Buf[d.Used:], ip)
+	d.Src = d.Buf[d.Used : d.Used+n]
+	d.Used += n
+	if n < len(ip) {
+		d.Truncated = true
+		return d.Valid
+	}
+	ip = e.EndPoint[1].IP()
+	n = copy(d.Buf[d.Used:], ip)
+	d.Dst = d.Buf[d.Used : d.Used+n]
+	d.Used += n
+	if n < len(ip) {
+		d.Truncated = true
+		return d.Valid
+	}
+	d.SPort = e.EndPoint[0].Port
+	d.DPort = e.EndPoint[1].Port
+	switch ev {
+	case EvRegExpired:
+		d.ReplStatus = 408
+		forcedReason = fakeTimeoutReason
+	case EvRegDel, EvRegNew:
+		// the event should be directly generated fron the Register reply
+		// and Fill-ed from the CallEntry, not from here
+		// (whe don't have all the information)
+		// However if called, try to fake something
+		d.ReplStatus = 292
+		forcedReason = fake2xxReason
+	default:
+		// should never reach this point
+		d.ReplStatus = 699
+	}
+
+
+	// add Reason "by-hand"
+	if forcedReason != nil {
+		n = addSlice(forcedReason,
+			&d.Attrs[AttrReason], &d.Buf, &d.Used, -1)
+		if n < len(forcedReason) {
+			d.Truncated = true
+			return d.Valid
+		}
+	}
+	d.Valid++
+
+	n = addPField(&e.AOR, e.buf, &d.Attrs[AttrFromURI], &d.Buf,
+		&d.Used, -1)
+	if n != int(e.AOR.Len) {
+		d.Truncated = true
+		return d.Valid
+	}
+	d.Valid++
+	n = addPField(&e.AOR, e.buf, &d.Attrs[AttrToURI], &d.Buf,
+		&d.Used, -1)
+	if n != int(e.AOR.Len) {
+		d.Truncated = true
+		return d.Valid
+	}
+	d.Valid++
+
+	return d.Valid
+}
+*/
+
 // mostly for debugging
 func (ed *EventData) String() string {
 	var duration time.Duration

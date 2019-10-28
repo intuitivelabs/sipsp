@@ -14,8 +14,16 @@ func DBG(f string, a ...interface{}) {
 	fmt.Printf("DBG: calltr: "+f, a...)
 }
 
+func BUG(f string, a ...interface{}) {
+	log.Printf("BUG: calltr: "+f, a...)
+}
+
+func ERR(f string, a ...interface{}) {
+	log.Printf("ERROR: calltr: "+f, a...)
+}
+
 type Config struct {
-	RegDelta uint32 // registartion expire delta in s, added to expire timeouts
+	RegDelta uint32 // registration expire delta in s, added to expire timeouts
 }
 
 var Cfg Config
@@ -30,7 +38,7 @@ func init() {
 // returns call entry on success (un-referenced!) or nil on error
 // (too much tag space required, or allocation failure)
 // dir should almost always be 0 (since creating a call-entry after
-// a request comming from the callee should never happen: even if we see
+// a request coming from the callee should never happen: even if we see
 // first something like that we wouldn't be able to know who initiated the
 // the dialog and hence the dir).
 func newCallEntry(hashNo, cseq uint32, m *sipsp.PSIPMsg, n *[2]NetInfo, dir int, evH HandleEvF) *CallEntry {

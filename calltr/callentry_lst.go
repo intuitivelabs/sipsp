@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"log"
 	"sync"
+	//sync "github.com/sasha-s/go-deadlock"
 
 	"andrei/sipsp"
 )
@@ -18,6 +19,7 @@ func (h *CallEntryHash) Init(sz int) {
 	h.HTable = make([]CallEntryLst, sz)
 	for i := 0; i < len(h.HTable); i++ {
 		h.HTable[i].Init()
+		h.HTable[i].bucket = uint32(i) // DBG
 	}
 }
 
@@ -59,6 +61,7 @@ type CallEntryLst struct {
 	lock sync.Mutex // lock
 	// statistics
 	entries uint
+	bucket  uint32 // DBG
 }
 
 func (lst *CallEntryLst) Init() {
@@ -75,11 +78,14 @@ func (lst *CallEntryLst) DecStats() {
 }
 
 func (lst *CallEntryLst) Lock() {
+	//DBG("CallEntryLst LOCKing(%p) head %p\n", lst, &lst.head)
 	lst.lock.Lock()
+	//DBG("CallEntryLst LOCKed(%p) head %p entries %d\n", lst, &lst.head, lst.entries)
 }
 
 func (lst *CallEntryLst) Unlock() {
 	lst.lock.Unlock()
+	//DBG("RegEntryLst UNLOCKed(%p) head %p entries %d\n", lst, &lst.head, lst.entries)
 }
 
 func (lst *CallEntryLst) Insert(e *CallEntry) {
@@ -114,7 +120,6 @@ func (lst *CallEntryLst) ForEach(f func(e *CallEntry) bool) {
 
 // iterates on the entire lists calling f(e) for each element, until
 // false is returned or the lists ends.
-// It does not support removing the current element from f.
 func (lst *CallEntryLst) ForEachSafeRm(f func(e *CallEntry) bool) {
 	cont := true
 	s := lst.head.next

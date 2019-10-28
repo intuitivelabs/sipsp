@@ -192,6 +192,8 @@ var fakeCancelReason = []byte("internal: cancel")
 var fakeTimeoutReason = []byte("internal: call state timeout")
 var fake2xxReason = []byte("internal: implied OK")
 
+// Fill EventData from a CallEntry.
+// Returns the number of PFields added. For a valid event, at least 1.
 func (d *EventData) Fill(ev EventType, e *CallEntry) int {
 	var forcedReason []byte
 	d.Type = ev

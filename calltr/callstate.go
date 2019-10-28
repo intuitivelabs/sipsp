@@ -322,25 +322,31 @@ func (ci *CallInfo) Init(b []byte) {
 	ci.buf = b
 }
 
-func (ci *CallInfo) getAttrField(i CallAttrIdx) *sipsp.PField {
+func (ci *CallInfo) GetAttrField(i CallAttrIdx) *sipsp.PField {
 	if int(i) >= len(ci.Attrs) || int(i) < 0 {
 		return nil
 	}
 	return &ci.Attrs[i]
 }
 
-func (ci *CallInfo) addAttrField(i CallAttrIdx, v *sipsp.PField, buf []byte) int {
+func (ci *CallInfo) AddAttrField(i CallAttrIdx, v *sipsp.PField, buf []byte) int {
 	return addPField(v, buf, &ci.Attrs[i], &ci.buf, &ci.used,
 		int(AttrSpace[i].Max))
 }
 
-func (ci *CallInfo) addAttr(i CallAttrIdx, v []byte) int {
+func (ci *CallInfo) AddAttr(i CallAttrIdx, v []byte) int {
 	return addSlice(v, &ci.Attrs[i], &ci.buf, &ci.used,
 		int(AttrSpace[i].Max))
 }
 
+// append a pfield in the Callinfo buf, without setting an attr to it
+// returns number of bytes added
+func (ci *CallInfo) AppendPField(v *sipsp.PField, buf []byte, dst *sipsp.PField) int {
+	return addPField(v, buf, dst, &ci.buf, &ci.used, 0)
+}
+
 // "delete" an attribut, freeing its used space (shifts all attrs above it)
-func (ci *CallInfo) delAttr(i CallAttrIdx) {
+func (ci *CallInfo) DelAttr(i CallAttrIdx) {
 
 	l := int(ci.Attrs[i].Len)
 	if l == 0 {
@@ -358,13 +364,13 @@ func (ci *CallInfo) delAttr(i CallAttrIdx) {
 	}
 }
 
-func (ci *CallInfo) overwriteAttrField(i CallAttrIdx, v *sipsp.PField, buf []byte) int {
-	return ci.overwriteAttr(i, v.Get(buf))
+func (ci *CallInfo) OverwriteAttrField(i CallAttrIdx, v *sipsp.PField, buf []byte) int {
+	return ci.OverwriteAttr(i, v.Get(buf))
 }
 
 // overwrite an already set attr
-func (ci *CallInfo) overwriteAttr(i CallAttrIdx, b []byte) int {
-	ret := ci.addAttr(i, b)
+func (ci *CallInfo) OverwriteAttr(i CallAttrIdx, b []byte) int {
+	ret := ci.AddAttr(i, b)
 	if ret != -1 {
 		// not already present => added
 		return ret
@@ -390,12 +396,12 @@ func (ci *CallInfo) overwriteAttr(i CallAttrIdx, b []byte) int {
 	}
 	// if we are here there is not enough space to "replace in place",
 	// try adding at the end
-	ci.delAttr(i)
-	return ci.addAttr(i, b)
+	ci.DelAttr(i)
+	return ci.AddAttr(i, b)
 }
 
 func (ci *CallInfo) GetAttrVal(i CallAttrIdx) []byte {
-	if v := ci.getAttrField(i); v != nil {
+	if v := ci.GetAttrField(i); v != nil {
 		return v.Get(ci.buf)
 	}
 	return nil
@@ -404,12 +410,12 @@ func (ci *CallInfo) GetAttrVal(i CallAttrIdx) []byte {
 // returns true on success (fully added) and false on partial add or
 // failure (already set)
 func (ci *CallInfo) AddMethod(v *sipsp.PField, buf []byte) bool {
-	n := ci.addAttrField(AttrMethod, v, buf)
+	n := ci.AddAttrField(AttrMethod, v, buf)
 	return n == int(v.Len)
 }
 
 // helper function: fills src array with corresp. values from the sip msg.
-func fillAttrsSrc(m *sipsp.PSIPMsg, dir int, src *[AttrLast]*sipsp.PField) {
+func FillAttrsSrc(m *sipsp.PSIPMsg, dir int, src *[AttrLast]*sipsp.PField) {
 	if m.Request() {
 		if dir == 0 {
 			src[AttrFromURI] = &m.PV.From.URI
@@ -485,7 +491,7 @@ func (ci *CallInfo) AddFromMsg(m *sipsp.PSIPMsg, dir int) int {
 		max int
 	}
 	var src [AttrLast]*sipsp.PField
-	fillAttrsSrc(m, dir, &src)
+	FillAttrsSrc(m, dir, &src)
 	for i := 0; i < len(src); i++ {
 		if src[i] == nil {
 			continue
@@ -510,7 +516,7 @@ func (ci *CallInfo) AddFromCi(si *CallInfo) int {
 			continue
 		}
 		//fmt.Printf("SetFromCi: addPField si.Attrs[%d - %s]: %v, len(si.buf)= %d (%d)\n", i, CallAttrIdx(i), si.Attrs[i], len(si.buf), si.used)
-		n := ci.addAttrField(CallAttrIdx(i), &si.Attrs[i], si.buf)
+		n := ci.AddAttrField(CallAttrIdx(i), &si.Attrs[i], si.buf)
 		if n > 0 {
 			ret += n
 		}
@@ -536,7 +542,7 @@ func fixLen(a, def, min, max uint) uint {
 func infoReserveSize(m *sipsp.PSIPMsg, dir int) uint {
 	var sz uint
 	var src [AttrLast]*sipsp.PField
-	fillAttrsSrc(m, dir, &src)
+	FillAttrsSrc(m, dir, &src)
 	for i := 0; i < len(src); i++ {
 		if src[i] == nil {
 			sz += AttrSpace[i].Default
@@ -548,8 +554,10 @@ func infoReserveSize(m *sipsp.PSIPMsg, dir int) uint {
 	return sz
 }
 
-// returns number of bytes added (limited by max) and -1 on error (dstP
-// not empty)
+// Copies a PField with accompanying buffer to another PField, buffer, offset.
+// Returns number of bytes added (limited by max) and -1 on error (dstP
+// not empty). It increases offs (by the number of bytes added).
+// If the destination PField is not empty (Len != 0) it will return error.
 func addPField(srcP *sipsp.PField, sbuf []byte, dstP *sipsp.PField, dbuf *[]byte, offs *int, max int) int {
 
 	/*	if dstP.Len != 0 {
@@ -567,8 +575,11 @@ func addPField(srcP *sipsp.PField, sbuf []byte, dstP *sipsp.PField, dbuf *[]byte
 	return addSlice(srcP.Get(sbuf), dstP, dbuf, offs, max)
 }
 
-// returns number of bytes added (limited by max) and -1 on error (dstP
-// not empty)
+// Copies a slice to destination buffer, at offset offs and sets a
+// PField to point to it.
+// Returns number of bytes added (limited by max) and -1 on error (dstP
+// not empty). It increases offs (by the number of bytes added).
+// If the destination PField is not empty (Len != 0) it will return error.
 func addSlice(src []byte, dstP *sipsp.PField, dbuf *[]byte, offs *int, max int) int {
 
 	if dstP.Len != 0 {
@@ -752,6 +763,10 @@ func (s *StateBackTrace) String() string {
 	return str
 }
 
+// CallEntry holds dialog or call state information in a compact form.
+// WARNING: since a custom mem. allocator will be used in the future, do
+//          not use pointers to go allocated objects (or GC might delete
+//          them)
 type CallEntry struct {
 	next, prev *CallEntry
 	Key        CallKey

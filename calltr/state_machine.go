@@ -1,6 +1,8 @@
 package calltr
 
 import (
+	"time"
+
 	"andrei/sipsp"
 	"andrei/sipsp/bytescase"
 )
@@ -163,7 +165,7 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeout
 					// update Contact...
 					if mmethod == sipsp.MRegister {
 						if mC := m.PV.Contacts.GetContact(0); mC != nil {
-							e.Info.overwriteAttrField(AttrContact,
+							e.Info.OverwriteAttrField(AttrContact,
 								&mC.URI, m.Buf)
 						}
 					}
@@ -218,7 +220,7 @@ func updateStateReq(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeout
 				newState = prevState // keep state
 				// update Contact...
 				if mC := m.PV.Contacts.GetContact(0); mC != nil {
-					e.Info.overwriteAttrField(AttrContact, &mC.URI, m.Buf)
+					e.Info.OverwriteAttrField(AttrContact, &mC.URI, m.Buf)
 				}
 			} else {
 				newState = CallStFNonInv
@@ -518,7 +520,7 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 		// a possible exception could be made for
 		//   e.Method == MInvite & mmethod = MCancel
 		e.ReplStatus[dir] = mstatus
-		e.Info.overwriteAttrField(AttrReason, &m.FL.Reason, m.Buf)
+		e.Info.OverwriteAttrField(AttrReason, &m.FL.Reason, m.Buf)
 	}
 	e.lastReplStatus[dir] = mstatus
 	e.lastMsgs.AddRepl(mstatus, dir, 0)
@@ -619,7 +621,7 @@ func finalTimeoutEv(e *CallEntry) EventType {
 			e.ReplStatus[0] = forcedStatus
 		}
 		if forcedReason != nil {
-			e.Info.overwriteAttr(AttrReason, *forcedReason)
+			e.Info.OverwriteAttr(AttrReason, *forcedReason)
 		}
 		e.evGen = EvGenTimeout
 	}
@@ -724,6 +726,7 @@ func handleRegRepl(e *CallEntry, m *sipsp.PSIPMsg) (event EventType, to TimeoutS
 		event = EvRegDel
 		to = 0
 	}
+	// aor := m.PV.GetTo().URI.Get(m.Buf) // byte slice w/ To uri
 	if event == EvRegNew {
 		// HACK: it's a new REG, in case this is an old
 		// recycled entry clear the EvRegDel flag

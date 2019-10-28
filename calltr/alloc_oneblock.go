@@ -1,5 +1,7 @@
 package calltr
 
+//+build alloc_oneblock
+
 import (
 	"log"
 	"reflect"

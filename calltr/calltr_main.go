@@ -240,6 +240,10 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 		// update final-replied register entries in-place to catch
 		// re-registrations for UAs that change from-tags between
 		// replies, but keep callid and still increase cseqs
+		/* Disable fromtag REGISTER relaxed matching hack - should be
+		   handled by the reg-cache code (forking would be ok).
+		   TODO: make it a config options
+
 		if m.Method() == sipsp.MRegister && e.Method == sipsp.MRegister &&
 			(e.State == CallStNonInvFinished ||
 				e.State == CallStNonInvNegReply) &&
@@ -266,6 +270,7 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 				return e
 			}
 		}
+		*/
 		// else fallback to call entry fork
 	case CallPartialMatch:
 		if e.Key.ToTag.Len == 0 {
@@ -406,7 +411,13 @@ func forkCallEntry(e *CallEntry, m *sipsp.PSIPMsg, dir int, match CallMatchType,
 		n.Info.AddFromCi(&e.Info)
 		n.Flags |= CFForkChild
 		e.Flags |= CFForkParent
-		n.EvFlags = e.EvFlags // keep ev flags, don't want to regen. seen EVs
+		//n.EvFlags = e.EvFlags
+		// keep ev flags, don't want to regen. seen EVs in forked calls
+		// exception: REGISTER hack - since register EVs are now handled by the
+		//  register binding cache, we don't inherit them in forked REGISTER
+		// entries (which are caused by REGISTERs with different from or
+		// to-tag)
+		n.EvFlags = e.EvFlags &^ EvRegMaskF
 	} else {
 		DBG("forkCallEntry: newCallEntry(...) failed\n")
 	}
@@ -617,15 +628,19 @@ endLocked:
 			_, ev = updateRegCache(ev, e, aor, contact)
 			cstHash.HTable[hashNo].Lock()
 		} else {
-			ev = EvNone
-			BUG("calltr.ProcessMsg: emty aor (%q) or contact(%q) for %p:"+
-				" ev %d (%q last %q prev) state %q (%q) prev msgs %q "+
-				"cid %q msg:\n%q\n",
-				aor, contact, ev, ev.String(),
-				e.crtEv.String(), e.lastEv.String(),
-				e.State.String(), e.prevState.String(),
-				e.lastMsgs.String(),
-				e.Key.GetCallID(), m.Buf)
+			// empty contact valid for a RegDel: e.g. seen only the
+			// reply or a reg ping with no contacts
+			if ev != EvRegDel {
+				BUG("calltr.ProcessMsg: emty aor (%q) or contact(%q) for %p:"+
+					" ev %d (%q last %q prev) state %q (%q) prev msgs %q "+
+					"cid %q msg:\n%q\n",
+					aor, contact, int(ev), ev.String(),
+					e.crtEv.String(), e.lastEv.String(),
+					e.State.String(), e.prevState.String(),
+					e.lastMsgs.String(),
+					e.Key.GetCallID(), m.Buf)
+				ev = EvNone
+			}
 		}
 	}
 	if ev != EvNone && evd != nil {
@@ -673,6 +688,7 @@ func updateRegCache(event EventType, e *CallEntry, aor []byte, c []byte) (bool, 
 		return false, EvNone
 	}
 
+	//DBG("updateRegCache: %s for %p: %q:%q:%q aor %q c %q regBinding %p\n", event.String(), e, e.Key.GetCallID(), e.Key.GetFromTag(), e.Key.GetToTag(), aor, c, e.regBinding)
 	switch event {
 	case EvRegNew:
 		cstHash.HTable[e.hashNo].Lock()
@@ -700,6 +716,7 @@ func updateRegCache(event EventType, e *CallEntry, aor []byte, c []byte) (bool, 
 			regHash.HTable[h].Lock()
 			rb := regHash.HTable[h].FindBindingUnsafe(&aorURI, aor, &cURI, c)
 			if rb != nil {
+				//DBG("updateRegCache: found existing binding %p: %q->%q ce %p\n", rb, rb.AOR.Get(rb.buf), rb.Contact.Get(rb.buf), rb.ce)
 				// if cached entry (aor, contact) found => this is a REG with diff.
 				//   CallId for an // existing aor,contact pair => do not generate
 				// an EvRegNew
@@ -725,6 +742,7 @@ func updateRegCache(event EventType, e *CallEntry, aor []byte, c []byte) (bool, 
 			if ce != nil {
 				cstHash.HTable[ce.hashNo].Lock()
 				if ce.regBinding == rb {
+					//DBG("updateRegCache: handling old ce %p: %q:%q:%q regBinding %p next %p prev %p\n", ce, ce.Key.GetCallID(), ce.Key.GetFromTag(), ce.Key.GetToTag(), ce.regBinding, ce.next, ce.prev)
 					ce.regBinding = nil
 					if !cstHash.HTable[ce.hashNo].Detached(ce) {
 						//  force short delete timeout
@@ -734,6 +752,7 @@ func updateRegCache(event EventType, e *CallEntry, aor []byte, c []byte) (bool, 
 						//  update ev. flags
 						ce.EvFlags.Set(EvRegDel)
 						ce.lastEv = EvRegDel
+						//DBG("updateRegCache: quick expire old ce %p: %q:%q:%q regBinding %p new EvFlags %q\n", ce, ce.Key.GetCallID(), ce.Key.GetFromTag(), ce.Key.GetToTag(), ce.regBinding, ce.EvFlags.String())
 					} // else already detached on waiting for 0 refcnt => nop
 					rb.Unref() // no longer ref'ed from the CallEntry
 				} // else somebody already removed ce.regBinding => bail out
@@ -748,6 +767,7 @@ func updateRegCache(event EventType, e *CallEntry, aor []byte, c []byte) (bool, 
 		} else { // e.regBinidng != nil
 			// reg binding already exists and attached to this CallEntry =>
 			// no EvRegNew
+			//DBG("updateRegCache: %p: %q:%q:%q set regBinding %p, doing nothing\n", e, e.Key.GetCallID(), e.Key.GetFromTag(), e.Key.GetToTag(), e.regBinding)
 			cstHash.HTable[e.hashNo].Unlock()
 			event = EvNone
 		}

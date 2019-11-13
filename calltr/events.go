@@ -49,6 +49,22 @@ func (e EventType) String() string {
 
 type EventFlags uint16
 
+const (
+	EvNoneF        EventFlags = iota
+	EvCallStartF   EventFlags = (EventFlags)(1) << EvCallStart
+	EvCallEndF     EventFlags = (EventFlags)(1) << EvCallEnd
+	EvCallAttemptF EventFlags = (EventFlags)(1) << EvCallAttempt
+	EvAuthFailedF  EventFlags = (EventFlags)(1) << EvAuthFailed
+	EvActionLogF   EventFlags = (EventFlags)(1) << EvActionLog
+	EvRegNewF      EventFlags = (EventFlags)(1) << EvRegNew
+	EvRegDelF      EventFlags = (EventFlags)(1) << EvRegDel
+	EvRegExpiredF  EventFlags = (EventFlags)(1) << EvRegExpired
+	EvSubNewF      EventFlags = (EventFlags)(1) << EvSubNew
+	EvSubDelF      EventFlags = (EventFlags)(1) << EvSubDel
+
+	EvRegMaskF EventFlags = EvRegNewF | EvRegDelF | EvRegExpiredF
+)
+
 // returns previous value
 func (f *EventFlags) Set(e EventType) bool {
 	m := uint(1) << uint(e)

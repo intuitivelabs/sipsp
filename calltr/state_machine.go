@@ -450,7 +450,7 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 					newState = CallStNonInvFinished
 					if mmethod == sipsp.MRegister {
 						// REGISTER special HACK
-						event, to = handleRegRepl(e, m)
+						event, to, toFlags = handleRegRepl(e, m)
 					}
 				} else {
 					// ignore, reply to something else, e.g. OPTIONS sent
@@ -462,7 +462,7 @@ func updateStateRepl(e *CallEntry, m *sipsp.PSIPMsg, dir int) (CallState, Timeou
 				newState = prevState // keep the current state
 				if mmethod == sipsp.MRegister {
 					// REGISTER special HACK
-					event, to = handleRegRepl(e, m)
+					event, to, toFlags = handleRegRepl(e, m)
 				} else {
 					// e.g. other message matching a REGISTER created entry
 					// like OPTIONS sent by some UACs
@@ -628,6 +628,8 @@ func finalTimeoutEv(e *CallEntry) EventType {
 
 // if m contains c, it return true,  expire_present and corresp. expire value
 // else false, false, 0
+// if the contact has no expire, but an Expire header field is present,
+// its value will be returned (and true for expire_present).
 func msgMatchContact(m *sipsp.PSIPMsg, c []byte) (bool, bool, uint32) {
 	if !m.PV.Contacts.Parsed() || m.PV.Contacts.N == 0 || len(c) == 0 {
 		// no contacts
@@ -682,19 +684,22 @@ func msgMatchContact(m *sipsp.PSIPMsg, c []byte) (bool, bool, uint32) {
 		} else {
 			// TODO:
 			// it might be present but we didn't parse it
-			// try to parsing m.PV.Contacts.LastVal
-			// if not found iterare on all headers looking for
+			// try parsing m.PV.Contacts.LastVal
+			// if not found iterate on all headers looking for
 			// contact
 			// or try to re-parse the whole message if Contacts.HNo > 1
 			// with enough contact space?
 			// e.g.: newmsg.Init(...make([]PFromBody, m.PV.Contacts.N)) ...
-			// other wise ParseAllContacts Contacs.LastVal ?
+			// otherwise ParseAllContacts Contacs.LastVal ?
 		}
 	}
 	return found, hasExp, exp
 }
 
-func handleRegRepl(e *CallEntry, m *sipsp.PSIPMsg) (event EventType, to TimeoutS) {
+// returns the event type, new timeout or 0 (meaning the caller should use the
+//  default) and timeout update flags (force update or extend-only timeout).
+func handleRegRepl(e *CallEntry, m *sipsp.PSIPMsg) (event EventType, to TimeoutS, toFlags TimerUpdateF) {
+	toFlags = FTimerUpdForce
 	event = EvRegNew
 	// TODO: if not all Contacts parsed, parse manually
 	//       REGISTER contacts
@@ -705,13 +710,18 @@ func handleRegRepl(e *CallEntry, m *sipsp.PSIPMsg) (event EventType, to TimeoutS
 		// was created from a REG reply w/ no contact (?)
 		// in either case we generate no event
 		event = EvNone
-		exp, _ := m.PV.MaxExpires()
-		to = TimeoutS(exp)
+		to = 0                // let caller decide on the default timeout
+		toFlags = FTimerUpdGT // allow only extending the timeout
+		/*
+			exp, _ := m.PV.MaxExpires()
+			to = TimeoutS(exp)
+		*/
 	} else if len(savedC) == 1 && savedC[0] == '*' {
 		// "*" contact - consider a reply the delete
 		//  confirmation
 		event = EvRegDel
 		to = 0
+		// default: force truncate-timeout (FTimerUpdForce)
 	} else if found, hasExp, exp := msgMatchContact(m, savedC); found {
 		if hasExp && exp == 0 {
 			// contact with 0 expire

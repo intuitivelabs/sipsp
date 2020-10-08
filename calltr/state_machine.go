@@ -657,7 +657,7 @@ func msgMatchContact(m *sipsp.PSIPMsg, c []byte) (bool, bool, uint32) {
 		mCuri := mC.URI.Get(m.Buf)
 		err2, _ := sipsp.ParseURI(mCuri, &mPCuri)
 		if (err1 == 0 && err2 == 0 &&
-			sipsp.URICmpShort(&pCuri, c, &mPCuri, mCuri)) ||
+			sipsp.URICmpShort(&pCuri, c, &mPCuri, mCuri, sipsp.URICmpAll)) ||
 			// fallback to normal string compare if unparsable uris:
 			(err1 != 0 && err2 != 0 && bytescase.CmpEq(mCuri, c)) {
 			// match

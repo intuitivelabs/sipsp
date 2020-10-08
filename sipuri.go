@@ -167,16 +167,36 @@ func (u *PsipURI) AdjustOffs(newpos PField) bool {
 	return true
 }
 
+// URICmpShort flags
+type URICmpFlags uint8
+
+const (
+	URICmpDefault  URICmpFlags = 0
+	URICmpAll      URICmpFlags = 0
+	URICmpSkipPort URICmpFlags = 1 << iota
+	URICmpSkipScheme
+	URICmpSkipUser
+	URICmpSkipPass
+)
+
 // CmpShort compares 2 "shortened" uris (up to port, not including parameters
 // or headers).
+// Parameters: u1 is a parsed sip uri, buf1 contains the data to which
+// u1 fields point to, u2 and buf2 contain the other uri and flags can
+// change how the uri will be compared (see URICmpFlags above).
 // Note that this is not a proper URI comparison (acccording to RFC3261 the
 // common parameters must match, user, ttl, method and maddr must either appear
 // in both URIs or in none and any present header must appear in both URIs to
 // match).
-func URICmpShort(u1 *PsipURI, buf1 []byte, u2 *PsipURI, buf2 []byte) bool {
-	return u1.URIType == u2.URIType && u1.PortNo == u2.PortNo &&
-		bytes.Equal(u1.User.Get(buf1), u2.User.Get(buf2)) &&
-		bytes.Equal(u1.Pass.Get(buf1), u2.Pass.Get(buf2)) &&
+//
+func URICmpShort(u1 *PsipURI, buf1 []byte, u2 *PsipURI, buf2 []byte,
+	flags URICmpFlags) bool {
+	return ((flags&URICmpSkipScheme) != 0 || (u1.URIType == u2.URIType)) &&
+		((flags&URICmpSkipPort) != 0 || (u1.PortNo == u2.PortNo)) &&
+		((flags&URICmpSkipUser) != 0 ||
+			bytes.Equal(u1.User.Get(buf1), u2.User.Get(buf2))) &&
+		((flags&URICmpSkipPass) != 0 ||
+			bytes.Equal(u1.Pass.Get(buf1), u2.Pass.Get(buf2))) &&
 		bytescase.CmpEq(u1.Host.Get(buf1), u2.Host.Get(buf2))
 }
 

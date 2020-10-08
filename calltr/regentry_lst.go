@@ -146,13 +146,14 @@ func (r *RegEntry) Unref() bool {
 }
 
 func (r *RegEntry) aorMatchURI(uri *sipsp.PsipURI, buf []byte) bool {
-	ret := sipsp.URICmpShort(&r.AORURI, r.buf, uri, buf)
+	ret := sipsp.URICmpShort(&r.AORURI, r.buf, uri, buf, sipsp.URICmpAll)
 	//DBG("aorMatchURI: %q with %p: %q (%q) => %v\n", uri.Flat(buf), r, r.AORURI.Flat(r.buf), r.AOR.Get(r.buf), ret)
 	return ret
 }
 
-func (r *RegEntry) contactMatchURI(uri *sipsp.PsipURI, buf []byte) bool {
-	ret := sipsp.URICmpShort(&r.ContactURI, r.buf, uri, buf)
+func (r *RegEntry) contactMatchURI(uri *sipsp.PsipURI, buf []byte,
+	flags sipsp.URICmpFlags) bool {
+	ret := sipsp.URICmpShort(&r.ContactURI, r.buf, uri, buf, flags)
 	//DBG("contactMatchURI: %q with %p: %q (%q) => %v\n", uri.Flat(buf), r, r.ContactURI.Flat(r.buf), r.Contact.Get(r.buf), ret)
 	return ret
 }
@@ -392,6 +393,10 @@ func (lst *RegEntryLst) FindURIUnsafe(uri *sipsp.PsipURI, buf []byte) *RegEntry 
 func (lst *RegEntryLst) FindBindingUnsafe(aor *sipsp.PsipURI, abuf []byte,
 	contact *sipsp.PsipURI, cbuf []byte) *RegEntry {
 	i := 0
+	cMatchFlgs := sipsp.URICmpAll
+	if Cfg.ContactIgnorePort {
+		cMatchFlgs = sipsp.URICmpSkipPort
+	}
 	loop := false
 	for e := lst.head.next; e != &lst.head; e = e.next {
 		if !loop {
@@ -402,7 +407,8 @@ func (lst *RegEntryLst) FindBindingUnsafe(aor *sipsp.PsipURI, abuf []byte,
 			}
 		}
 		i++
-		if e.aorMatchURI(aor, abuf) && e.contactMatchURI(contact, cbuf) {
+		if e.aorMatchURI(aor, abuf) &&
+			e.contactMatchURI(contact, cbuf, cMatchFlgs) {
 			return e
 		}
 	}

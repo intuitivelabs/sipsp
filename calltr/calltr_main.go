@@ -23,7 +23,8 @@ func ERR(f string, a ...interface{}) {
 }
 
 type Config struct {
-	RegDelta uint32 // registration expire delta in s, added to expire timeouts
+	RegDelta          uint32 // registration expire delta in s, added to expire timeouts
+	ContactIgnorePort bool   // ignore port when comparing contacts (but not in AORs)
 }
 
 var Cfg Config

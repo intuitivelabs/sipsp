@@ -5,7 +5,7 @@ import (
 	"net"
 	"time"
 
-	"andrei/sipsp"
+	"github.com/intuitivelabs/sipsp"
 )
 
 type EventType uint8

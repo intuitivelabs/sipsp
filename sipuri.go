@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"fmt"
 
-	"andrei/sipsp/bytescase"
+	"github.com/intuitivelabs/sipsp/bytescase"
 )
 
 // TODO: unit test

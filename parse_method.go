@@ -3,7 +3,7 @@ package sipsp
 import (
 	"bytes"
 
-	"andrei/sipsp/bytescase"
+	"github.com/intuitivelabs/sipsp/bytescase"
 )
 
 type SIPMethod uint8

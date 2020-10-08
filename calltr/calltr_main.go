@@ -1,9 +1,9 @@
 package calltr
 
 import (
-	"andrei/sipsp"
 	"bytes"
 	"fmt"
+	"github.com/intuitivelabs/sipsp"
 	"io"
 	"log"
 	"regexp"

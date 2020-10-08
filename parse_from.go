@@ -3,7 +3,7 @@ package sipsp
 import (
 	//	"fmt"
 
-	"andrei/sipsp/bytescase"
+	"github.com/intuitivelabs/sipsp/bytescase"
 )
 
 // PFromBody is used to hold a parsed From, To, Contact, RR or Route

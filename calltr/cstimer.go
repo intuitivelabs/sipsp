@@ -6,7 +6,6 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
-	//"andrei/sipsp" //Debugging
 )
 
 // timers and timer related functions

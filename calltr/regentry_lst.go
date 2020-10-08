@@ -9,7 +9,7 @@ import (
 	//	"time"
 	"unsafe"
 
-	"andrei/sipsp"
+	"github.com/intuitivelabs/sipsp"
 )
 
 /* TODO:

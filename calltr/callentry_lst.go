@@ -6,7 +6,7 @@ import (
 	"sync"
 	//sync "github.com/sasha-s/go-deadlock"
 
-	"andrei/sipsp"
+	"github.com/intuitivelabs/sipsp"
 )
 
 // hash table and hash bucket lists

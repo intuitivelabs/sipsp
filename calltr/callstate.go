@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"andrei/sipsp"
+	"github.com/intuitivelabs/sipsp"
 )
 
 const (

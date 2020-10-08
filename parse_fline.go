@@ -1,7 +1,7 @@
 package sipsp
 
 import (
-	"andrei/sipsp/bytescase"
+	"github.com/intuitivelabs/sipsp/bytescase"
 )
 
 // PFLine contains the parsed first line of a SIP message (request or reply).

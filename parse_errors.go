@@ -1,3 +1,9 @@
+// // Copyright 2019-2020 Intuitive Labs Gmbh. All rights reserved.
+// //
+// // Use of this source code is governed by source-available license
+// // that can be found in the LICENSE file in the root of the source
+// // tree.
+
 package sipsp
 
 // ErrorHdr is the type for the errors returned by various header parsing

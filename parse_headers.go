@@ -1,7 +1,7 @@
 package sipsp
 
 import (
-	"github.com/intuitivelabs/sipsp/bytescase"
+	"github.com/intuitivelabs/bytescase"
 )
 
 type HdrT uint16

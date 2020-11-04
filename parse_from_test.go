@@ -9,7 +9,7 @@ import (
 	"testing"
 	//	"log"
 
-	"github.com/intuitivelabs/sipsp/bytescase"
+	"github.com/intuitivelabs/bytescase"
 )
 
 func TestMain(m *testing.M) {

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/intuitivelabs/sipsp/bytescase"
+	"github.com/intuitivelabs/bytescase"
 )
 
 // randomize case in a string

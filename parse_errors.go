@@ -83,7 +83,7 @@ func (e ErrorHdr) Error() string {
 }
 
 // ErrorConv() converts the ErrorHdr value to error.
-// It uses "boxed" values to prevent runtime allocations
+// It uses "boxed" values to prevent runtime allocations.
 func (e ErrorHdr) ErrorConv() error {
 	if 0 <= int(e) && int(e) < len(err2ErrorVal) {
 		return err2ErrorVal[e]

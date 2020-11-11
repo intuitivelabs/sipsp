@@ -10,6 +10,7 @@ import (
 //	"fmt"
 )
 
+// PContacts contains the parsed contacts headers.
 type PContacts struct {
 	Vals       []PFromBody // parsed contacts min(N, len(Vals))
 	N          int         // no of contact _values_ found, can be >len(Vals)
@@ -21,7 +22,7 @@ type PContacts struct {
 	first      PFromBody // even if Vals is nil, we remember the first val.
 }
 
-// PNo returns the number of parsed contacts in Vals
+// VNo returns the number of parsed contacts headers.
 func (c *PContacts) VNo() int {
 	if c.N > len(c.Vals) {
 		return len(c.Vals)
@@ -29,6 +30,7 @@ func (c *PContacts) VNo() int {
 	return c.N
 }
 
+// GetContact returns the requested parsed contact body or nil.
 func (c *PContacts) GetContact(n int) *PFromBody {
 	if c.VNo() > n {
 		return &c.Vals[n]
@@ -45,7 +47,7 @@ func (c *PContacts) GetContact(n int) *PFromBody {
 	return nil
 }
 
-// More() returns true if there are more contacts that did not fit in Vals
+// More() returns true if there are more contacts that did not fit in Vals.
 func (c *PContacts) More() bool {
 	return c.N > len(c.Vals)
 }

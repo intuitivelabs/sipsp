@@ -4,18 +4,20 @@
 // // that can be found in the LICENSE file in the root of the source
 // // tree.
 
+//Package sipsp implements SIP message parsing.
 package sipsp
 
 //OffsT is the type used for offset and length used internally in PField.
-type OffsT uint16 // TODO: change to uint16 (once max buf & msg size <= 65k)
+type OffsT uint16 // uint16 since max buf & msg size <= 65k
 
-// PField is the type for parsed fields (like host, to body a.s.o.)
+// PField is the type for parsed fields (like host, to body a.s.o.).
+// it holds and offset an a length inside a buffer.
 type PField struct {
 	Offs OffsT
 	Len  OffsT
 }
 
-// Set sets a PField to point to [start:end]
+// Set sets a PField to point to [start:end].
 func (p *PField) Set(start, end int) {
 	p.Offs = OffsT(start)
 	p.Len = OffsT(end - start)

@@ -10,7 +10,9 @@ import (
 //	"fmt"
 )
 
-// PContacts contains the parsed contacts headers.
+// PContacts contains the parsed Contact header values for one or more
+// different Contact headers (all the contacts in the message that fit
+// in the parsed value array).
 type PContacts struct {
 	Vals       []PFromBody // parsed contacts min(N, len(Vals))
 	N          int         // no of contact _values_ found, can be >len(Vals)
@@ -47,11 +49,12 @@ func (c *PContacts) GetContact(n int) *PFromBody {
 	return nil
 }
 
-// More() returns true if there are more contacts that did not fit in Vals.
+// More returns true if there are more contacts that did not fit in Vals.
 func (c *PContacts) More() bool {
 	return c.N > len(c.Vals)
 }
 
+// Reset re-initializes the parsed values.
 func (c *PContacts) Reset() {
 	for i := 0; i < c.VNo(); i++ {
 		c.Vals[i].Reset()
@@ -61,22 +64,32 @@ func (c *PContacts) Reset() {
 	c.Vals = v
 }
 
+// Init initializes the contact values from an array of parsed values.
 func (c *PContacts) Init(valbuf []PFromBody) {
 	c.Vals = valbuf
 }
 
+// Empty returns true if no contacts values have been parsed.
 func (c *PContacts) Empty() bool {
 	return c.N == 0
 }
 
+// Parsed returns true if there are some parsed contacts values.
 func (c *PContacts) Parsed() bool {
 	return c.N > 0
 }
 
+// ParseOneContact parses the content of one Contact vale, found at
+// offset offs in buf. pfrom will be filled with the parsed content.
+// See ParseNameAddrPVal() for more information.
 func ParseOneContact(buf []byte, offs int, pfrom *PFromBody) (int, ErrorHdr) {
 	return ParseNameAddrPVal(HdrContact, buf, offs, pfrom)
 }
 
+// ParseAllContactValues tries to parse all the values in a contact header
+// situated at offs in buf and add them to the passed PContacts.
+// It can return ErrHdrMoreBytes if more data is needed (the value is not
+// fully contained in buf).
 func ParseAllContactValues(buf []byte, offs int, c *PContacts) (int, ErrorHdr) {
 	var next int
 	var err ErrorHdr

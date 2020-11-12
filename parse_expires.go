@@ -6,6 +6,10 @@
 
 package sipsp
 
+// ParseExpiresVal parses an Expires header value, starting at offs in buf.
+// It returns a new offset pointing after the part that was parsed and an
+// error.
+// For more information see ParseUIntVal().
 func ParseExpiresVal(buf []byte, offs int, pcl *PUIntBody) (int, ErrorHdr) {
 	return ParseUIntVal(buf, offs, pcl)
 }

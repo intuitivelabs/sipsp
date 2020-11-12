@@ -6,11 +6,14 @@
 
 package sipsp
 
-/* number size as string (more then 10 overflows and uint32
-more then 9  might */
+// MaxCSeqNValueSize holds the maximum length of the CSeq value
+// interpreted as string (more then 9 can overflow and uint32).
 const MaxCSeqNValueSize = 10
+
+// MaxCSeqNValue holds the maximum numeric value for the CSeq.
 const MaxCSeqNValue = 1<<32 - 1 // numeric max.
 
+// PCSeqBody contains a partially or fully parsed CSeq header value.
 type PCSeqBody struct {
 	CSeqNo   uint32
 	MethodNo SIPMethod
@@ -20,18 +23,23 @@ type PCSeqBody struct {
 	PCSeqIState
 }
 
+// Reset re-initializes the parsing state and the CSeq value.
 func (cs *PCSeqBody) Reset() {
 	*cs = PCSeqBody{}
 }
 
+// Empty returns true if nothing has been parsed yet.
 func (cs PCSeqBody) Empty() bool {
 	return cs.state == csInit
 }
 
+// Parsed returns true if the CSeq body was fully parsed.
 func (cs PCSeqBody) Parsed() bool {
 	return cs.state == csFIN
 }
 
+// Pending return true if the CSeq body is in the process of being parsed
+// (it is only partially parsed, more input is needed).
 func (cs PCSeqBody) Pending() bool {
 	return cs.state != csFIN && cs.state != csInit
 }

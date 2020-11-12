@@ -10,26 +10,34 @@ import (
 	"github.com/intuitivelabs/bytescase"
 )
 
+// HdrT is used to hold the header type as a numeric constant.
 type HdrT uint16
 
+// HdrFlags packs several header values into bit flags.
 type HdrFlags uint16
 
+// Reset initializes a HdrFlags.
 func (f *HdrFlags) Reset() {
 	*f = 0
 }
 
+// Set sets the header flag corresponding to the passed header type.
 func (f *HdrFlags) Set(Type HdrT) {
 	*f |= 1 << Type
 }
 
+// Clear resets the header flag corresponding to the passed header type.
 func (f *HdrFlags) Clear(Type HdrT) {
 	*f &^= 1 << Type // equiv to & ^(...)
 }
 
+// Test returns true if the flag corresponding to the passed header type
+// is set.
 func (f HdrFlags) Test(Type HdrT) bool {
 	return (f & (1 << Type)) != 0
 }
 
+// Any returns true if at least one of the passed header types is set.
 func (f HdrFlags) Any(types ...HdrT) bool {
 	for _, t := range types {
 		if f&(1<<t) != 0 {
@@ -39,6 +47,7 @@ func (f HdrFlags) Any(types ...HdrT) bool {
 	return false
 }
 
+// AllSet returns true if all of the passed header types are set.
 func (f HdrFlags) AllSet(types ...HdrT) bool {
 	for _, t := range types {
 		if f&(1<<t) == 0 {
@@ -48,6 +57,7 @@ func (f HdrFlags) AllSet(types ...HdrT) bool {
 	return true
 }
 
+// HdrT header types constants.
 const (
 	HdrNone HdrT = iota
 	HdrFrom
@@ -63,6 +73,7 @@ const (
 	HdrOther // generic, non recognized header
 )
 
+// HdrFlags constants for each header type.
 const (
 	HdrFromF        HdrFlags = 1 << HdrFrom
 	HdrToF          HdrFlags = 1 << HdrTo
@@ -93,6 +104,7 @@ var hdrTStr = [...]string{
 	HdrOther:       "Generic",
 }
 
+// String implements the Stringer interface.
 func (t HdrT) String() string {
 	if int(t) >= len(hdrTStr) || int(t) < 0 {
 		return "invalid"
@@ -154,7 +166,7 @@ func init() {
 }
 
 // GetHdrType returns the corresponding HdrT type for a given header name.
-// The header name should not contain any leading or ending whitespace.
+// The header name should not contain any leading or ending white space.
 func GetHdrType(name []byte) HdrT {
 	i := hashHdrName(name)
 	for _, h := range hdrNameLookup[i] {
@@ -165,6 +177,7 @@ func GetHdrType(name []byte) HdrT {
 	return HdrOther
 }
 
+// Hdr contains a partial or fully parsed header.
 type Hdr struct {
 	Type HdrT
 	Name PField
@@ -172,30 +185,37 @@ type Hdr struct {
 	HdrIState
 }
 
+// Reset re-initializes the parsing state and the parsed values.
 func (h *Hdr) Reset() {
 	*h = Hdr{}
 }
 
+// Missing returns true if the header is empty (not parsed).
 func (h *Hdr) Missing() bool {
 	return h.Type == HdrNone
 }
 
+// HdrIState contains internal header parsing state.
 type HdrIState struct {
 	state uint8
 }
 
+// HdrLst groups a list of parsed headers.
 type HdrLst struct {
-	PFlags HdrFlags // parsed headers as flags
-	N      int      // total numbers of headers found (can be > len(Hdrs))
-	Hdrs   []Hdr
-	h      [int(HdrOther) - 1]Hdr // list of type -> hdr
+	PFlags HdrFlags               // parsed headers as flags
+	N      int                    // total numbers of headers found (can be > len(Hdrs))
+	Hdrs   []Hdr                  // all parsed headers, that fit in the slice.
+	h      [int(HdrOther) - 1]Hdr // list of type -> hdr, pointing to the
+	// first hdr with the corresponding type.
 	HdrLstIState
 }
 
+// HdrLstIState contains internal HdrLst parsing state.
 type HdrLstIState struct {
 	hdr Hdr // tmp. header used for saving the state
 }
 
+// Reset re-initializes the parsing state and values.
 func (hl *HdrLst) Reset() {
 	hdrs := hl.Hdrs
 	*hl = HdrLst{}
@@ -205,6 +225,8 @@ func (hl *HdrLst) Reset() {
 	hl.Hdrs = hdrs
 }
 
+// GetHdr returns the first parsed header of the requested type.
+// If not corresponding header was parsed it returns nil.
 func (hl *HdrLst) GetHdr(t HdrT) *Hdr {
 	if t > HdrNone && t < HdrOther {
 		return &hl.h[int(t)-1] // no value for HdrNone or HdrOther
@@ -212,6 +234,10 @@ func (hl *HdrLst) GetHdr(t HdrT) *Hdr {
 	return nil
 }
 
+// SetHdr adds a new header to the  internal "first" header list (see GetHdr)
+// if not already present.
+// It returns true if successful and false if a header of the same type was
+// already added or the header type is invalid.
 func (hl *HdrLst) SetHdr(newhdr *Hdr) bool {
 	i := int(newhdr.Type) - 1
 	if i >= 0 && i < len(hl.h) && hl.h[i].Missing() {
@@ -221,7 +247,7 @@ func (hl *HdrLst) SetHdr(newhdr *Hdr) bool {
 	return false
 }
 
-// PHBodies defines an interface for getting pointer to parsed bodies structs.
+// PHBodies defines an interface for getting pointers to parsed bodies structs.
 type PHBodies interface {
 	GetFrom() *PFromBody
 	GetTo() *PFromBody
@@ -234,7 +260,7 @@ type PHBodies interface {
 }
 
 // PHdrVals holds all the header specific parsed values structures.
-// (implement PHBodies=
+// (implements PHBodies)
 type PHdrVals struct {
 	From     PFromBody
 	To       PFromBody
@@ -245,6 +271,7 @@ type PHdrVals struct {
 	Expires  PUIntBody
 }
 
+// Reset re-initializes all the parsed values.
 func (hv *PHdrVals) Reset() {
 	hv.From.Reset()
 	hv.To.Reset()
@@ -255,40 +282,56 @@ func (hv *PHdrVals) Reset() {
 	hv.Expires.Reset()
 }
 
+// Init initializes all the Contacts values to the passed contacsbuf
+// and resets all the other values.
 func (hv *PHdrVals) Init(contactsbuf []PFromBody) {
 	hv.Reset()
 	hv.Contacts.Init(contactsbuf)
 }
 
+// GetFrom returns a pointer to the parsed from.
+// It implements the PHBodies interface.
 func (hv *PHdrVals) GetFrom() *PFromBody {
 	return &hv.From
 }
 
+// GetTo returns a pointer to the parsed to.
+// It implements the PHBodies interface.
 func (hv *PHdrVals) GetTo() *PFromBody {
 	return &hv.To
 }
 
+// GetCSeq returns a pointer to the parsed cseq body.
+// It implements the PHBodies interface.
 func (hv *PHdrVals) GetCSeq() *PCSeqBody {
 	return &hv.CSeq
 }
 
+// GetCallID returns a pointer to the parsed call-id body.
+// It implements the PHBodies interface.
 func (hv *PHdrVals) GetCallID() *PCallIDBody {
 	return &hv.Callid
 }
 
+// GetCLen returns a pointer to the parsed content-length body.
+// It implements the PHBodies interface.
 func (hv *PHdrVals) GetCLen() *PUIntBody {
 	return &hv.CLen
 }
 
+// GetContacts returns a pointer to the parsed contacts values.
+// It implements the PHBodies interface.
 func (hv *PHdrVals) GetContacts() *PContacts {
 	return &hv.Contacts
 }
 
+// GetExpires returns a pointer to the parsed expire value.
+// It implements the PHBodies interface.
 func (hv *PHdrVals) GetExpires() *PUIntBody {
 	return &hv.Expires
 }
 
-// MaxExpires() returns the maximum expires time between all the contacts
+// MaxExpires returns the maximum expires time between all the contacts
 // and a possible Expire header.
 // If neither Contact: or Expire: header are present, it will return 0, false.
 func (hv *PHdrVals) MaxExpires() (uint32, bool) {
@@ -309,9 +352,9 @@ func (hv *PHdrVals) MaxExpires() (uint32, bool) {
 
 // ParseHdrLine parses a header from a SIP message.
 // The parameters are: a message buffer, the offset in the buffer where the
-// message starts, a pointer to a Hdr structure that will be filled
-// and a PHBodies interface (defining methods to obtain pointers to
-//  from, to, callid, cseq and content-length specific parsed body structures
+// parsing should start (or continue), a pointer to a Hdr structure that will
+// be filled and a PHBodies interface (defining methods to obtain pointers to
+// from, to, callid, cseq and content-length specific parsed body structures
 // that will be filled if one of the corresponding headers is found).
 // It returns a new offset, pointing immediately after the end of the header
 // (it could point to len(buf) if the header and the end of the buffer
@@ -602,10 +645,11 @@ errEmptyTok:
 }
 
 // ParseHeaders parses all the headers till end of header marker (double CRLF).
-// It returns offset after parsed headers and no error (0) on success.
+// It returns an offset after parsed headers and no error (0) on success.
 // Special error values: ErrHdrMoreBytes - more data needed, call again
 //                       with returned offset and same headers struct.
 //                       ErrHdrEmpty - no headers (empty line found first)
+// See also ParseHdrLine().
 func ParseHeaders(buf []byte, offs int, hl *HdrLst, hb PHBodies) (int, ErrorHdr) {
 
 	i := offs

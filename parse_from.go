@@ -12,7 +12,8 @@ import (
 	"github.com/intuitivelabs/bytescase"
 )
 
-// PFromBody is used to hold a parsed From, To, Contact, RR or Route
+// PFromBody is used to hold a fully or partially parsed From, To, Contact,
+// RR or Route.
 type PFromBody struct {
 	Name       PField
 	URI        PField
@@ -30,18 +31,22 @@ type PFromBody struct {
 	PFromIState
 }
 
+// Reset re-initializes the parsing state and the parsed values.
 func (fv *PFromBody) Reset() {
 	*fv = PFromBody{}
 }
 
+// Empty returns true if nothing has been parsed yet.
 func (fv *PFromBody) Empty() bool {
 	return fv.state == fbInit
 }
 
+// Parsed returns true if the values are fully parsed.
 func (fv *PFromBody) Parsed() bool {
 	return fv.state == fbFIN
 }
 
+// Pending returns true for partially parsed values (more input is needed).
 func (fv *PFromBody) Pending() bool {
 	return fv.state != fbFIN && fv.state != fbInit
 }
@@ -94,6 +99,8 @@ const (
 	fbFIN  // parsing ended
 )
 
+// ParseFromVal parses the value of a From header.
+// For more information see ParseNameAddrPVal().
 func ParseFromVal(buf []byte, offs int, pfrom *PFromBody) (int, ErrorHdr) {
 	return ParseNameAddrPVal(HdrFrom, buf, offs, pfrom)
 }
@@ -134,7 +141,7 @@ func ParseNameAddrPVal(h HdrT, buf []byte, offs int, pfrom *PFromBody) (int, Err
 		// called again after finishing
 		return offs, 0 // or report error?
 	}
-	var s int = pfrom.soffs // saved "component" start offset
+	var s = pfrom.soffs // saved "component" start offset
 	i := offs
 	var n, crl int // next non lws and crlf length
 	var err, retOkErr ErrorHdr

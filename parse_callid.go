@@ -6,23 +6,30 @@
 
 package sipsp
 
+// PCallIDBody holds a partially or fully parsed Call-ID body.
 type PCallIDBody struct {
 	CallID PField
 	PCallIDIState
 }
 
+// Reset re-intializes the PCallIDBody and parsing state.
 func (cv *PCallIDBody) Reset() {
 	*cv = PCallIDBody{}
 }
 
+// Empty returns true if PCallIDBody does not contain anything
+// (nothing parsed).
 func (cv PCallIDBody) Empty() bool {
 	return cv.state == ciInit
 }
 
+// Parsed returns true if the Call-ID body was fully parsed.
 func (cv PCallIDBody) Parsed() bool {
 	return cv.state == ciFIN
 }
 
+// Pending returns true if hte Call-ID body is in the process of being
+// parsed, but it is not fully parsed yet.
 func (cv PCallIDBody) Pending() bool {
 	return cv.state != ciFIN && cv.state != ciInit
 }

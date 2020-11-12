@@ -12,6 +12,7 @@ import (
 	"github.com/intuitivelabs/bytescase"
 )
 
+// SIPMethod is the type used to hold the various SIP request methods.
 type SIPMethod uint8
 
 // method types
@@ -34,7 +35,8 @@ const (
 	MOther // last
 )
 
-var Method2Name [MOther + 1][]byte = [MOther + 1][]byte{
+// Method2Name translates between a numeric SIPMethod and the ASCII name.
+var Method2Name = [MOther + 1][]byte{
 	MUndef:     []byte(""),
 	MInvite:    []byte("INVITE"),
 	MAck:       []byte("ACK"),
@@ -53,6 +55,7 @@ var Method2Name [MOther + 1][]byte = [MOther + 1][]byte{
 	MOther:     []byte("OTHER"),
 }
 
+// Name returns the ASCII sip method name.
 func (m SIPMethod) Name() []byte {
 	if m > MOther {
 		return Method2Name[MUndef]
@@ -60,11 +63,14 @@ func (m SIPMethod) Name() []byte {
 	return Method2Name[m]
 }
 
-// debug/ pretty print
+// String implements the Stringer interface (converts the method to string,
+// similar to Name()).
 func (m SIPMethod) String() string {
 	return string(m.Name())
 }
 
+// GetMethodNo converts from an ASCII SIP method name to the corresponding
+// numeric internal value.
 func GetMethodNo(buf []byte) SIPMethod {
 	i := hashMthName(buf)
 	for _, m := range mthNameLookup[i] {
@@ -72,14 +78,6 @@ func GetMethodNo(buf []byte) SIPMethod {
 			return m.t
 		}
 	}
-	//TODO: make it more efficient
-	/*
-		for i := MUndef + 1; i < MOther; i++ {
-			if bytes.Equal(buf, Method2Name[i]) {
-				return i
-			}
-		}
-	*/
 	return MOther
 }
 

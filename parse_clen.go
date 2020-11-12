@@ -6,33 +6,42 @@
 
 package sipsp
 
-/* number size as string (more then 9 can overflow and uint32 */
+// MaxCLenValueSize holds the maximum length of the Content-Length value
+// interpreted as string (more then 9 can overflow and uint32).
 const MaxCLenValueSize = 9
+
+// MaxClenValue holds the maximum numeric value for the Content-Length.
 const MaxClenValue = 1 << 24 // numeric max.
 
+// PUIntBody holds a partial or fully parsed unsigned int header value.
 type PUIntBody struct {
 	UIVal uint32
 	SVal  PField
 	PUIntIState
 }
 
+// Reset re-initializes the parsed value and internal parsing state.
 func (cl *PUIntBody) Reset() {
 	*cl = PUIntBody{}
 }
 
+// Empty returns true if nothing was parsed yet.
 func (cl PUIntBody) Empty() bool {
 	return cl.state == clInit
 }
 
+// Parsed returns true if the value is fully parsed.
 func (cl PUIntBody) Parsed() bool {
 	return cl.state == clFIN
 }
 
+// Pending returns true if the value is only partially parsed
+// (more input needed).
 func (cl PUIntBody) Pending() bool {
 	return cl.state != clFIN && cl.state != clInit
 }
 
-// PUintIState contains ParseUIntVal internal state info (private).
+// PUIntIState contains ParseUIntVal internal state info (private).
 type PUIntIState struct {
 	state uint8 // internal state
 	soffs int   // saved internal offset
@@ -46,6 +55,11 @@ const (
 	clFIN
 )
 
+// ParseCLenVal parses a Content-Length header value, starting at offs
+// in buf and filling pcl.
+// It returns a new offset pointing after the part that was parsed and
+// an error.
+// For more information see ParseUIntVal().
 func ParseCLenVal(buf []byte, offs int, pcl *PUIntBody) (int, ErrorHdr) {
 	o, err := ParseUIntVal(buf, offs, pcl)
 	if err == 0 &&
@@ -55,7 +69,7 @@ func ParseCLenVal(buf []byte, offs int, pcl *PUIntBody) (int, ErrorHdr) {
 	return o, err
 }
 
-// ParseUintVal parses the value/content of a header containing an uint
+// ParseUIntVal parses the value/content of a header containing an uint
 // (e.g. Content-Length, Expires)
 // The parameters are: a message buffer, the offset in the buffer where the
 // from: (or to:) value starts (should point after the ':') and a pointer

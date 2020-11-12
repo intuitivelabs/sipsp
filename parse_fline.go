@@ -22,26 +22,34 @@ type PFLine struct {
 	PFLineIState
 }
 
+// Reset re-initializes the parsing state and the first line values.
 func (fl *PFLine) Reset() {
 	*fl = PFLine{}
 }
 
+// Request returns true if the parsed first line corresponds to a SIP request.
 func (fl *PFLine) Request() bool {
 	return fl.Status == 0
 }
 
+// Empty returns true is nothing has been parsed yet.
 func (fl *PFLine) Empty() bool {
 	return fl.state == flInit
 }
 
+// Parsed returns true if the first line is fully parsed (complete and end
+// found).
 func (fl *PFLine) Parsed() bool {
 	return fl.state == flFIN
 }
 
+// Pending returns true if the first line is only partially parsed
+// (more input is needed).
 func (fl *PFLine) Pending() bool {
 	return fl.state != flFIN && fl.state != flInit
 }
 
+// PFLineIState contains internal parsing state associated to a PFLine.
 type PFLineIState struct {
 	state uint8 // internal parser state
 }

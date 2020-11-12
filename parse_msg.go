@@ -8,6 +8,10 @@ package sipsp
 
 import ()
 
+// PSIPMsg contains a fully or partially parsed SIP message.
+// If the message is not fully contained in the passed input, the internal
+// parsing state will be saved internally and parsing can be resumed later
+// when more input is available.
 type PSIPMsg struct {
 	FL   PFLine   // first line request/response
 	PV   PHdrVals // parsed (selected )header values
@@ -20,6 +24,7 @@ type PSIPMsg struct {
 	SIPMsgIState               // internal state
 }
 
+// Reset re-initializes the parsed message and the internal parsing state.
 func (m *PSIPMsg) Reset() {
 	*m = PSIPMsg{}
 	m.FL.Reset()
@@ -29,6 +34,10 @@ func (m *PSIPMsg) Reset() {
 	m.SIPMsgIState = SIPMsgIState{}
 }
 
+// Init initializes a PSIPMsg with a new message and empty array for
+// holding the parsed headers and contacts values.
+// If some place holder arrays are nil, default 10-elements private arrays
+// will be used instead (PSIPMsg.hdrs or PSIPMsg.contacts).
 func (m *PSIPMsg) Init(msg []byte, hdrs []Hdr, contacts []PFromBody) {
 	m.Reset()
 	m.Buf = msg
@@ -44,18 +53,24 @@ func (m *PSIPMsg) Init(msg []byte, hdrs []Hdr, contacts []PFromBody) {
 	}
 }
 
+// Parsed returns true is the message if fully parsed
+// (and no more input is needed).
 func (m *PSIPMsg) Parsed() bool {
 	return m.state == SIPMsgFIN
 }
 
+// Err returns true if parsing failed.
 func (m *PSIPMsg) Err() bool {
 	return m.state == SIPMsgErr
 }
 
+// Request returns true if the message is a SIP request.
 func (m *PSIPMsg) Request() bool {
 	return m.FL.Request()
 }
 
+// Method returns the numeric SIP method number.
+// If the message is a reply, the method from the CSeq header will be used.
 func (m *PSIPMsg) Method() SIPMethod {
 
 	if m.Request() {
@@ -64,11 +79,13 @@ func (m *PSIPMsg) Method() SIPMethod {
 	return m.PV.CSeq.MethodNo
 }
 
+// SIPMsgIState holds the internal parsing state.
 type SIPMsgIState struct {
 	state uint8
 	offs  int
 }
 
+// Parsing states.
 const (
 	SIPMsgInit uint8 = iota
 	SIPMsgFLine
@@ -79,16 +96,24 @@ const (
 	SIPMsgFIN    // fully parsed
 )
 
-// parsing flags
+// Parsing flags for ParseSIPMsg().
 const (
 	SIPMsgSkipBodyF   = 1 << iota // don't parse the body (return offset = body start)
 	SIPMsgCLenReqF                // error if SIPMsgSkipBodyF and no CLen
 	SIPMsgNoMoreDataF             // no more message data, stop at end of buf
 )
 
+// ParseSIPMsg parses a SIP message contained in buf[], starting
+// at offset offs. If the parsing requires more data (ErrHdrMoreBytes),
+// this function should be called again with an extended buf containing the
+// old data + new data and with offs equal to the last returned value (so
+// that parsing will continue from that point).
+// It returns the offset at which parsing finished and an error.
+// If no more input data is available (buf contains everything, e.g. a full UDP
+// received packet) pass the SIPMsgNoMoreDataF flag.
 func ParseSIPMsg(buf []byte, offs int, msg *PSIPMsg, flags uint8) (int, ErrorHdr) {
 
-	var o int = offs
+	var o = offs
 	var err ErrorHdr
 	switch msg.state {
 	case SIPMsgInit:

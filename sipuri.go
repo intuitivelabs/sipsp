@@ -16,6 +16,7 @@ import (
 
 // TODO: unit test
 
+// DBG is a debug log function.
 func DBG(f string, a ...interface{}) {
 	fmt.Printf("sipsp: "+f, a...)
 }
@@ -23,10 +24,10 @@ func DBG(f string, a ...interface{}) {
 // SIPStr is the "string" type used by all the sip parsing functions.
 type SIPStr []byte
 
-// ErrorURI is the type for the errors returned by Parse
+// ErrorURI is the type for the errors returned by Parse.
 type ErrorURI uint32
 
-// possible error value
+// Possible error values.
 const (
 	NoURIErr ErrorURI = iota
 	ErrURIBadChar
@@ -92,6 +93,7 @@ type PsipURI struct {
 	PortNo  uint16
 }
 
+// Reset re-initializes the parsed URI fields.
 func (u *PsipURI) Reset() {
 	*u = PsipURI{}
 }
@@ -130,12 +132,15 @@ func (u *PsipURI) Short() PField {
 	return r
 }
 
-// Truncate "shortens" a parsed uri, by removing the parameters and headers
+// Truncate "shortens" a parsed uri, by removing the parameters and headers.
 func (u *PsipURI) Truncate() {
 	u.Params.Reset()
 	u.Headers.Reset()
 }
 
+// AdjustOffs "moves" a parsed URI to point to a different buffer location.
+// It adjusts the internal offsets for all the fields so that they will
+// point inside "newpos" (the uri start offset will become newpos.Offs).
 func (u *PsipURI) AdjustOffs(newpos PField) bool {
 	offs := newpos.Offs // new start
 	end := offs + newpos.Len
@@ -173,9 +178,10 @@ func (u *PsipURI) AdjustOffs(newpos PField) bool {
 	return true
 }
 
-// URICmpShort flags
+// URICmpFlags is the type for URI comparisons flags.
 type URICmpFlags uint8
 
+// URICmpFlags flags values.
 const (
 	URICmpDefault  URICmpFlags = 0
 	URICmpAll      URICmpFlags = 0
@@ -185,8 +191,8 @@ const (
 	URICmpSkipPass
 )
 
-// CmpShort compares 2 "shortened" uris (up to port, not including parameters
-// or headers).
+// URICmpShort compares 2 "shortened" uris (up to port, not including
+// parameters or headers).
 // Parameters: u1 is a parsed sip uri, buf1 contains the data to which
 // u1 fields point to, u2 and buf2 contain the other uri and flags can
 // change how the uri will be compared (see URICmpFlags above).
@@ -206,7 +212,7 @@ func URICmpShort(u1 *PsipURI, buf1 []byte, u2 *PsipURI, buf2 []byte,
 		bytescase.CmpEq(u1.Host.Get(buf1), u2.Host.Get(buf2))
 }
 
-// Parse parses a sip uri into a PSIPUri structure.
+// ParseURI parses a sip uri into a PSIPUri structure.
 // Note: PsipURI members will point into the original SipStr
 // Returns err = 0 on success, or error and the parsed-so-far offset.
 // TODO: tel uri emebeded in sip (user=phone param)

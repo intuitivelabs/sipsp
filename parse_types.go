@@ -40,15 +40,19 @@ func (p *PField) Extend(newEnd int) {
 	}
 }
 
+// Empty returns true if the PField has 0 length.
 func (p PField) Empty() bool {
 	return p.Len == 0
 }
 
+// Get returns a byte slice inside buf, corresponding to the PField.
+// See GetPField() for more information.
 func (p PField) Get(buf []byte) []byte {
 	return GetPField(buf, p)
 }
 
-//GetPField returns a byte slice for the corresp. field f, pointing inside buf.
+// GetPField returns a byte slice for the corresponding field f, pointing
+// inside buf.
 func GetPField(buf []byte, f PField) []byte {
 	return buf[f.Offs : f.Offs+f.Len]
 }

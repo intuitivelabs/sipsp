@@ -18,10 +18,15 @@ type PSIPMsg struct {
 	HL   HdrLst   // headers
 	Body PField   // message body
 
-	hdrs         [10]Hdr       // headers broken into name: val used inside HL
-	contacts     [10]PFromBody // default parsed contacts space
-	Buf          []byte        // message data, parsed values will point inside it
-	SIPMsgIState               // internal state
+	hdrs     [10]Hdr       // headers broken into name: val used inside HL
+	contacts [10]PFromBody // default parsed contacts space
+	// Parsed data slice (copy of the original slice passed as parameter to
+	// the ParseSIPMsg() function). Parsed values will point inside it.
+	// Note however that the actual message starts at Buf[intial_used_offset],
+	// which might be different from Buf[0].
+	Buf          []byte
+	RawMsg       []byte // raw message data (actual raw message from RawMsg[0])
+	SIPMsgIState        // internal state
 }
 
 // Reset re-initializes the parsed message and the internal parsing state.
@@ -108,9 +113,13 @@ const (
 // this function should be called again with an extended buf containing the
 // old data + new data and with offs equal to the last returned value (so
 // that parsing will continue from that point).
+// The offset in the initial call should be 0, but it can have different
+// values.
 // It returns the offset at which parsing finished and an error.
 // If no more input data is available (buf contains everything, e.g. a full UDP
 // received packet) pass the SIPMsgNoMoreDataF flag.
+// Note that a reference to buf[] will be "saved" inside msg.Buf when
+// parsing is complete.
 func ParseSIPMsg(buf []byte, offs int, msg *PSIPMsg, flags uint8) (int, ErrorHdr) {
 
 	var o = offs
@@ -137,7 +146,8 @@ func ParseSIPMsg(buf []byte, offs int, msg *PSIPMsg, flags uint8) (int, ErrorHdr
 		if (flags & SIPMsgSkipBodyF) != 0 {
 			if flags&SIPMsgCLenReqF != 0 && !msg.PV.CLen.Parsed() {
 				msg.state = SIPMsgNoCLen
-				msg.Buf = buf[msg.offs:o]
+				msg.Buf = buf[0:o]
+				msg.RawMsg = msg.Buf[msg.offs:o]
 				return o, ErrHdrNoCLen
 			}
 			msg.state = SIPMsgFIN
@@ -168,7 +178,8 @@ func ParseSIPMsg(buf []byte, offs int, msg *PSIPMsg, flags uint8) (int, ErrorHdr
 	}
 end:
 	msg.Body.Extend(o)
-	msg.Buf = buf[msg.offs:o]
+	msg.Buf = buf[0:o]
+	msg.RawMsg = msg.Buf[msg.offs:o]
 	msg.state = SIPMsgFIN
 	return o, 0
 errFL:

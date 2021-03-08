@@ -1,4 +1,4 @@
-github.com/intuitivelabs/bytescase v1.0.0 h1:jNVpavUJjSyeSi5dlk54G7oGWqe762fl06bhJupFb3A=
-github.com/intuitivelabs/bytescase v1.0.0/go.mod h1:dHOb10bRPpOlSKEB+/fNhKj+3jniKlMTJjtp9eOxscQ=
 github.com/intuitivelabs/bytescase v1.0.1 h1:As9FoZOyQuaQa4StsNHGlMbweAf3rZ5Ku2U1QsXauhA=
 github.com/intuitivelabs/bytescase v1.0.1/go.mod h1:Gr+B79bV8+mDKvYr4hja6qPVHtYG4Knem0K8gzZKHHU=
+github.com/intuitivelabs/slog v0.0.1 h1:r4S29d0wuHFjQmtl2HLQl/g/NgYVQEQ8lGKMn1SeVqc=
+github.com/intuitivelabs/slog v0.0.1/go.mod h1:Ui5r7QQoGGj6/sODBbsz8VJbbylXyx86aVhbdoriIKY=

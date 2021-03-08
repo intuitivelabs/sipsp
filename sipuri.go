@@ -9,17 +9,11 @@ package sipsp
 import (
 	//	"errors"
 	"bytes"
-	"fmt"
 
 	"github.com/intuitivelabs/bytescase"
 )
 
 // TODO: unit test
-
-// DBG is a debug log function.
-func DBG(f string, a ...interface{}) {
-	fmt.Printf("sipsp: "+f, a...)
-}
 
 // SIPStr is the "string" type used by all the sip parsing functions.
 type SIPStr []byte
@@ -146,7 +140,11 @@ func (u *PsipURI) AdjustOffs(newpos PField) bool {
 	end := offs + newpos.Len
 	if (u.Scheme.Len + u.User.Len + u.Pass.Len + u.Host.Len + u.Port.Len +
 		u.Params.Len + u.Headers.Len) > newpos.Len {
-		DBG("AdjustOffs: %d > %d\n", u.Scheme.Len+u.User.Len+u.Pass.Len+u.Host.Len+u.Port.Len+u.Params.Len+u.Headers.Len, newpos.Len)
+		if DBGon() {
+			DBG("AdjustOffs: %d > %d\n",
+				u.Scheme.Len+u.User.Len+u.Pass.Len+u.Host.Len+u.Port.Len+
+					u.Params.Len+u.Headers.Len, newpos.Len)
+		}
 		return false
 	}
 	start := u.Scheme.Offs
@@ -293,7 +291,6 @@ func ParseURI(uri SIPStr, puri *PsipURI) (ErrorURI, int) {
 	var c byte
 	for ; i < len(uri); i++ {
 		c = uri[i]
-		//DBG("ParseURI: parsing %s_%c state %d i %d s %d\n", uri[:i], c, state, i, s)
 		switch state {
 		case uInitSIP, uInitSIPS, uInitTEL:
 			switch c {

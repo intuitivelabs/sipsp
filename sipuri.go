@@ -99,12 +99,14 @@ func (u *PsipURI) Flat(buf []byte) []byte {
 
 	if u.Headers.Len > 0 {
 		r.Set(int(u.Scheme.Offs), int(u.Headers.Offs+u.Headers.Len))
-	} else if u.Pass.Len > 0 {
+	} else if u.Params.Len > 0 {
 		r.Set(int(u.Scheme.Offs), int(u.Params.Offs+u.Params.Len))
 	} else if u.Port.Len > 0 {
 		r.Set(int(u.Scheme.Offs), int(u.Port.Offs+u.Port.Len))
 	} else if u.Host.Len > 0 {
 		r.Set(int(u.Scheme.Offs), int(u.Host.Offs+u.Host.Len))
+	} else if u.Pass.Len > 0 {
+		r.Set(int(u.Scheme.Offs), int(u.Pass.Offs+u.Pass.Len))
 	} else if u.User.Len > 0 {
 		r.Set(int(u.Scheme.Offs), int(u.User.Offs+u.User.Len))
 	}

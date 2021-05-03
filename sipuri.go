@@ -168,6 +168,10 @@ func (u *PsipURI) AdjustOffs(newpos PField) bool {
 		u.Port.Offs = u.Port.Offs - start + offs
 		last = u.Port.Offs + u.Port.Len
 	}
+	if u.Params.Offs != 0 {
+		u.Params.Offs = u.Params.Offs - start + offs
+		last = u.Params.Offs + u.Params.Len
+	}
 	if u.Headers.Offs != 0 {
 		u.Headers.Offs = u.Headers.Offs - start + offs
 		last = u.Headers.Offs + u.Headers.Len

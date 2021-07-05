@@ -495,8 +495,17 @@ func genFromBody(n, u, p, tagv string, random bool) (string, string) {
 	} else {
 		s = n + randLWS() + "<" + u + ">"
 	}
-	if len(tagv) != 0 && len(p) != 0 {
+
+	if len(tagv) != 0 {
 		tag = "tag" + randLWS() + "=" + randLWS() + tagv
+	} else if random && (rand.Intn(2) == 0) {
+		// generate "tag="  (no value)
+		tag = "tag" + randLWS() + "=" + randLWS()
+	} else {
+		// no tag
+		tag = ""
+	}
+	if len(tag) != 0 && len(p) != 0 {
 		//both param and tags present => random order
 		if random && (rand.Intn(2) == 0) {
 			params = p + randLWS() + ";" + randLWS() + tag
@@ -505,8 +514,7 @@ func genFromBody(n, u, p, tagv string, random bool) (string, string) {
 		}
 	} else if len(p) != 0 {
 		params = p
-	} else if len(tagv) != 0 {
-		tag = "tag" + randLWS() + "=" + randLWS() + tagv
+	} else if len(tag) != 0 {
 		params = tag
 	}
 	if len(params) != 0 {

@@ -310,17 +310,12 @@ func ParseNameAddrPVal(h HdrT, buf []byte, offs int, pfrom *PFromBody) (int, Err
 			case ' ', '\t', '\n', '\r':
 				n, crl, err = skipLWS(buf, i)
 				if err == ErrHdrMoreBytes {
-					if pfrom.state == fbParamName ||
-						pfrom.state == fbPossibleParamName {
-						// keep state and keep the offset to point
-						// before the whitespace.
-						// This allows properly checking for spaces
-						// in a param name (ilegal multi-token pname)
-						// after re-covering from HdrMoreBytes.
-						goto moreBytes
-					}
-					// normal case, next offset after current whitespace
-					i = n
+					// keep state and keep the offset to point
+					// before the whitespace.
+					// This allows properly checking for spaces
+					// in a param name (ilegal multi-token pname)
+					// and trimming white space after re-covering
+					// from HdrMoreBytes.
 					goto moreBytes
 				}
 				// advance state after skipping WS
@@ -349,9 +344,11 @@ func ParseNameAddrPVal(h HdrT, buf []byte, offs int, pfrom *PFromBody) (int, Err
 				if pfrom.state == fbParamName {
 					pfrom.state = fbNewParamVal
 					pfrom.pend = i
+					pfrom.vstart = i + 1 // in case we have an empty value
 				} else if pfrom.state == fbPossibleParamName {
 					pfrom.state = fbNewPossibleVal
 					pfrom.pend = i
+					pfrom.vstart = i + 1 // in case we have an empty value
 				} else {
 					// not allowed: ";="
 					return i, ErrHdrBadChar
@@ -363,7 +360,7 @@ func ParseNameAddrPVal(h HdrT, buf []byte, offs int, pfrom *PFromBody) (int, Err
 			case '>':
 				return i, ErrHdrBadChar
 			case ';': // new param
-				// fbNew* :llow empty params. eg.: foo.bar;;p2
+				// fbNew* allow empty params. eg.: foo.bar;;p2
 				// else something like p1;p2...
 				if pfrom.state == fbParamName {
 					pfrom.state = fbNewParam
@@ -412,24 +409,28 @@ func ParseNameAddrPVal(h HdrT, buf []byte, offs int, pfrom *PFromBody) (int, Err
 			case ' ', '\t', '\n', '\r':
 				n, crl, err = skipLWS(buf, i)
 				if err == ErrHdrMoreBytes {
-					if pfrom.state == fbParamVal ||
-						pfrom.state == fbPossibleVal {
-						// keep state and keep the offset to point
-						// before the whitespace.
-						// This allows properly checking for spaces
-						// in a value (ilegal multi-token values)
-						// after re-covering from HdrMoreBytes.
-						goto moreBytes
-					}
-					// normal case, next offset after current whitespace
-					i = n
+					// keep state and keep the offset to point
+					// before the whitespace.
+					// This allows properly checking for spaces
+					// in a value (ilegal multi-token values) or
+					// trimming whitespace for a value
+					// after re-covering from HdrMoreBytes.
 					goto moreBytes
 				}
-				// advance state after skipping WS
-				if pfrom.state == fbParamVal {
+				switch pfrom.state {
+				case fbNewParamVal, fbNewPossibleVal:
+					// keep state, advance start of value (skipping over WS)
+					if err == 0 {
+						pfrom.vstart = n
+					}
+				case fbParamVal:
+					// advance state after skipping WS
+					// possible end-of-value: crt pos
 					pfrom.state = fbParamValEnd
 					pfrom.vend = i
-				} else if pfrom.state == fbPossibleVal {
+				case fbPossibleVal:
+					// advance state after skipping WS
+					// possible end-of-value crt pos
 					pfrom.state = fbPossibleValEnd
 					pfrom.vend = i
 				}
@@ -554,9 +555,10 @@ endOfHdr:
 		//pfrom.Params.Set(int(pfrom.Params.Offs), i)
 		pfrom.Params.Extend(i)
 		pfrom.V.Extend(i)
-	case fbParamVal, fbPossibleVal:
-		fallthrough
 	case fbNewParamVal, fbNewPossibleVal: // empty param val e.g. p=
+		pfrom.vstart = i
+		fallthrough
+	case fbParamVal, fbPossibleVal:
 		pfrom.vend = i
 		setFromParamVal(buf, pfrom)
 		// uri or possible uri already found, make sure the params end is set

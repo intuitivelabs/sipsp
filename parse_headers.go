@@ -70,6 +70,7 @@ const (
 	HdrUA
 	HdrRecordRoute
 	HdrRoute
+	HdrPAI
 	HdrOther // generic, non recognized header
 )
 
@@ -85,6 +86,7 @@ const (
 	HdrUAF          HdrFlags = 1 << HdrUA
 	HdrRecordRouteF HdrFlags = 1 << HdrRecordRoute
 	HdrRouteF       HdrFlags = 1 << HdrRoute
+	HdrPAIF         HdrFlags = 1 << HdrPAI
 	HdrOtherF       HdrFlags = 1 << HdrOther
 )
 
@@ -101,6 +103,7 @@ var hdrTStr = [...]string{
 	HdrUA:          "User-Agent",
 	HdrRecordRoute: "Record-Router",
 	HdrRoute:       "Route",
+	HdrPAI:         "P-Asserted-Identity",
 	HdrOther:       "Generic",
 }
 
@@ -136,6 +139,7 @@ var hdrName2Type = [...]hdr2Type{
 	{n: []byte("user-agent"), t: HdrUA},
 	{n: []byte("record-route"), t: HdrRecordRoute},
 	{n: []byte("route"), t: HdrRoute},
+	{n: []byte("p-asserted-identity"), t: HdrPAI},
 }
 
 const (
@@ -226,7 +230,7 @@ func (hl *HdrLst) Reset() {
 }
 
 // GetHdr returns the first parsed header of the requested type.
-// If not corresponding header was parsed it returns nil.
+// If no corresponding header was parsed it returns nil.
 func (hl *HdrLst) GetHdr(t HdrT) *Hdr {
 	if t > HdrNone && t < HdrOther {
 		return &hl.h[int(t)-1] // no value for HdrNone or HdrOther

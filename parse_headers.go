@@ -260,6 +260,7 @@ type PHBodies interface {
 	GetCLen() *PUIntBody
 	GetContacts() *PContacts
 	GetExpires() *PUIntBody
+	GetPAIs() *PPAIs
 	Reset()
 }
 
@@ -272,6 +273,7 @@ type PHdrVals struct {
 	CSeq     PCSeqBody
 	CLen     PUIntBody
 	Contacts PContacts
+	PAIs     PPAIs
 	Expires  PUIntBody
 }
 
@@ -335,6 +337,12 @@ func (hv *PHdrVals) GetExpires() *PUIntBody {
 	return &hv.Expires
 }
 
+// GetPAIs returns a pointer to the parsed P-Asserted-Identity values.
+// It implements the PHBodies interface.
+func (hv *PHdrVals) GetPAIs() *PPAIs {
+	return &hv.PAIs
+}
+
 // MaxExpires returns the maximum expires time between all the contacts
 // and a possible Expire header.
 // If neither Contact: or Expire: header are present, it will return 0, false.
@@ -385,6 +393,7 @@ func ParseHdrLine(buf []byte, offs int, h *Hdr, hb PHBodies) (int, ErrorHdr) {
 		hCLen
 		hContact
 		hExpires
+		hPAI
 		hFIN
 	)
 
@@ -454,6 +463,18 @@ func ParseHdrLine(buf []byte, offs int, h *Hdr, hb PHBodies) (int, ErrorHdr) {
 					n, err = ParseExpiresVal(buf, o, expb)
 					if err == 0 { /* fix hdr.Val */
 						h.Val = expb.SVal
+					}
+				}
+			case HdrPAI:
+				if pais := hb.GetPAIs(); pais != nil {
+					if h.state != hPAI {
+						// new contact header found
+						pais.HNo++
+					}
+					h.state = hPAI
+					n, err = ParseAllPAIValues(buf, o, pais)
+					if err == 0 { /* fix hdr.Val */
+						h.Val = pais.LastHVal
 					}
 				}
 			}
@@ -631,6 +652,14 @@ func ParseHdrLine(buf []byte, offs int, h *Hdr, hb PHBodies) (int, ErrorHdr) {
 			n, err := ParseExpiresVal(buf, i, expb)
 			if err == 0 { /* fix hdr.Val */
 				h.Val = expb.SVal
+				h.state = hFIN
+			}
+			return n, err
+		case hPAI: // continue contact parsing
+			pais := hb.GetPAIs()
+			n, err := ParseAllPAIValues(buf, i, pais)
+			if err == 0 { /* fix hdr.Val */
+				h.Val = pais.LastHVal
 				h.state = hFIN
 			}
 			return n, err

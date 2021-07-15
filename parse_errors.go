@@ -33,6 +33,7 @@ const (
 	ErrHdrNoCLen // no Content-Length header and Content-Length required
 	ErrHdrBug
 	ErrConvBug
+	ErrHdrTooManyVals
 )
 
 // error values corresp. to each ErrorHdr value: this way the interface
@@ -56,6 +57,7 @@ var err2ErrorVal = [...]error{
 	ErrHdrNoCLen,
 	ErrHdrBug,
 	ErrConvBug,
+	ErrHdrTooManyVals,
 }
 
 var errHdrStr = [...]string{
@@ -76,6 +78,7 @@ var errHdrStr = [...]string{
 	ErrHdrNoCLen:       "no Content-Length header in message",
 	ErrHdrBug:          "internal BUG while parsing header",
 	ErrConvBug:         "error conversion BUG",
+	ErrHdrTooManyVals:  "too many values for the header",
 }
 
 func (e ErrorHdr) Error() string {

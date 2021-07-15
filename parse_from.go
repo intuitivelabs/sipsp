@@ -107,7 +107,7 @@ func ParseFromVal(buf []byte, offs int, pfrom *PFromBody) (int, ErrorHdr) {
 
 func multipleValsOk(h HdrT) bool {
 	switch h {
-	case HdrContact, HdrRecordRoute, HdrRoute:
+	case HdrContact, HdrRecordRoute, HdrRoute, HdrPAI:
 		return true
 	}
 	return false

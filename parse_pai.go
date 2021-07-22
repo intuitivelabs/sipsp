@@ -104,9 +104,14 @@ func ParseAllPAIValues(buf []byte, offs int, c *PPAIs) (int, ErrorHdr) {
 					c.last.Reset() // prepare for next value
 				}
 				continue // get next value
-			} else if c.N > len(c.Vals) {
+				// allow, but ignore more then  2 values
+				// (to stop parsing if more then 2 values uncomment the following code)
+			}
+		/*
+			 else if c.N > len(c.Vals) {
 				err = ErrHdrTooManyVals
 			}
+		*/
 		case ErrHdrMoreBytes:
 			// do nothing, just for readability
 		default:

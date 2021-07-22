@@ -205,7 +205,7 @@ func TestParseAllPAIsValues(t *testing.T) {
 		{[]byte("C1 <sip:1@ba.b>;expires=1;q=1.0,sip:2@foo.bar;expires=3;q=0.9,<sip:3@c.d>;q=0.123;expires=5;x\r\nX"),
 			0,
 			PPAIs{N: 3, LastHVal: PField{0, 0}},
-			0 /* \r offset */, ErrHdrTooManyVals},
+			0 /* \r offset */, ErrHdrOk},
 	}
 	var c PPAIs
 	c.Init()

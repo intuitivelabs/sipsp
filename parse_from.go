@@ -107,7 +107,7 @@ func ParseFromVal(buf []byte, offs int, pfrom *PFromBody) (int, ErrorHdr) {
 
 func multipleValsOk(h HdrT) bool {
 	switch h {
-	case HdrContact, HdrRecordRoute, HdrRoute:
+	case HdrContact, HdrRecordRoute, HdrRoute, HdrPAI:
 		return true
 	}
 	return false
@@ -120,12 +120,12 @@ func multipleValsOk(h HdrT) bool {
 // from: (or to:) value starts (should point after the ':') and a pointer
 // to a from value structure that will be filled.
 // It returns a new offset, pointing immediately after the end of the header
-// (it could point to len(buf) if the header end the end of the buffer
+// (it could point to len(buf) if the header end and the end of the buffer
 // coincide) and an error. If the header is not fully contained in buf[offs:]
 //  ErrHdrMoreBytes will be returned and this function can be called again
 // when more bytes are available, with the same buffer, the returned
 // offset ("continue point") and the same pfrom structure.
-// If ErrHdrMoteValues is returned it means this header conatins multiple
+// If ErrHdrMoreValues is returned it means this header conatins multiple
 // values (e.g. Contact: foo@bar,x@y.z). In this case the pfrom structure
 // is filled with the current value and this function should be called
 // again  with a fresh pfrom to parse the next value, until success or another

@@ -130,6 +130,8 @@ var testsHeaders = [...]testCase{
 		eRes: eRes{err: 0, t: HdrContact}},
 	{n: "Contact", b: "<sip:c1@a.b>;expires=60,Foo Bar <sip:test.org>,sip:a.b:5060,sip:c:pwd@x.org;expires=10;q=0.56",
 		eRes: eRes{err: 0, t: HdrContact}},
+	{n: "P-Asserted-Identity", b: "FooBar Baz <baz@bar.com>",
+		eRes: eRes{err: 0, t: HdrPAI}},
 	{n: "Expires", b: "3600", eRes: eRes{err: 0, t: HdrExpires}},
 	{n: "Foo", b: "generic header", eRes: eRes{err: 0, t: HdrOther}},
 }
@@ -273,11 +275,44 @@ CSeq: 914159 CANCEL\r
 Via: SIP/2.0/UDP 1.2.3.4;branch=z9hG4bKnashds8\r
 Max-Forwards: 70\r
 Date: Thu, 21 Feb 2002 13:02:03 GMT\r
+P-Asserted-Identity: "Test" <b@foo.bar>\r
 Contact: sip:a@foo.bar:5060,"A B" <sip:ab@x.y>;expires=60,\r
  <sip:foo.bar>;q=0.9\r
 Expires: 300 \r
 Content-Length: 568\r
-`, n: 12},
+`, n: 13},
+		{m: `From: <b@foo.bar>;tag=1234\r
+To:<x@y.com>\r
+Call-ID: a84b4c76e66710\r
+From: Second From <x@q.b>;tag=5678\r
+CSeq: 314159 INVITE\r
+CSeq: 914159 CANCEL\r
+Via: SIP/2.0/UDP 1.2.3.4;branch=z9hG4bKnashds8\r
+Max-Forwards: 70\r
+Date: Thu, 21 Feb 2002 13:02:03 GMT\r
+P-Asserted-Identity: "Test" <b@foo.bar>, tel:1234, "2nd" <c@foo.bar>\r
+Contact: sip:a@foo.bar:5060,"A B" <sip:ab@x.y>;expires=60,\r
+ <sip:foo.bar>;q=0.9\r
+Expires: 300 \r
+Content-Length: 568\r
+`, n: 13},
+		{m: `From: <b@foo.bar>;tag=1234\r
+To:<x@y.com>\r
+Call-ID: a84b4c76e66710\r
+From: Second From <x@q.b>;tag=5678\r
+CSeq: 314159 INVITE\r
+CSeq: 914159 CANCEL\r
+Via: SIP/2.0/UDP 1.2.3.4;branch=z9hG4bKnashds8\r
+Max-Forwards: 70\r
+Date: Thu, 21 Feb 2002 13:02:03 GMT\r
+P-Asserted-Identity: "Test" <a@foo.bar>\r
+P-Asserted-Identity: "Test" <b@foo.bar>\r
+P-Asserted-Identity: "Test" <c@foo.bar>, tel:1234\r
+Contact: sip:a@foo.bar:5060,"A B" <sip:ab@x.y>;expires=60,\r
+ <sip:foo.bar>;q=0.9\r
+Expires: 300 \r
+Content-Length: 568\r
+`, n: 15},
 	}
 	var hl HdrLst
 	var hdrs [20]Hdr

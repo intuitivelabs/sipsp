@@ -17,7 +17,9 @@ type PField struct {
 	Len  OffsT
 }
 
-// Set sets a PField to point to [start:end].
+// Set sets a PField to point to [start:end).
+// end points to the first character after the desired end of the PField,
+// (the end index is not inclusive, the last included element index is end-1).
 func (p *PField) Set(start, end int) {
 	p.Offs = OffsT(start)
 	p.Len = OffsT(end - start)
@@ -33,6 +35,8 @@ func (p *PField) Reset() {
 }
 
 // Extend "grows" a PField to a new end offset.
+// newEnd points to the first character after the desired end of the PField,
+// (the end index is not inclusive, the last included element index is newEnd-1).
 func (p *PField) Extend(newEnd int) {
 	p.Len = OffsT(newEnd) - p.Offs
 	if newEnd < int(p.Offs) {

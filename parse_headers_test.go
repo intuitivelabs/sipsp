@@ -321,7 +321,42 @@ Content-Length: 568\r
 	offs := 0
 	hl.Hdrs = hdrs[:]
 	for _, c := range tests {
-		buf := []byte(c.m + "\r\n")
+		buf := make([]byte, len(c.m)+2) // space for extra \r\n
+		// handle escapes: \r & \n
+		var i int
+		var escape bool
+		for _, b := range []byte(c.m) {
+			if b == '\\' {
+				escape = true
+				continue
+			} else {
+				if escape {
+					switch b {
+					case 'n':
+						buf[i] = '\n'
+					case 'r':
+						buf[i] = '\r'
+					case 't':
+						buf[i] = '\t'
+					case '\\':
+						buf[i] = '\\'
+					default:
+						// unrecognized => \char
+						buf[i] = '\\'
+						i++
+						buf[i] = b
+					}
+					escape = false
+				} else {
+					buf[i] = b
+				}
+			}
+			i++
+		}
+		buf[i] = '\r'
+		buf[i+1] = '\n'
+		buf = buf[:i+2]
+
 		if c.offs == 0 {
 			c.offs = len(buf)
 		}
@@ -337,8 +372,10 @@ Content-Length: 568\r
 			}
 		*/
 		hl.Reset()
+		phv.Reset()
 		testParseHeadersPieces(t, buf, offs, &hl, &phv, &c, 20)
 		hl.Reset()
+		phv.Reset()
 	}
 }
 

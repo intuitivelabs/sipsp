@@ -329,6 +329,7 @@ func testParseMsgPieces(t *testing.T, buf []byte, offs int, e *msgTest,
 
 	var msg PSIPMsg
 	var err ErrorHdr
+	var msgInit bool
 	o := offs
 	pflags := e.pf
 	pieces := rand.Intn(n)
@@ -343,12 +344,13 @@ func testParseMsgPieces(t *testing.T, buf []byte, offs int, e *msgTest,
 			}
 		}
 		sz = rand.Intn(len(buf) + 1 - end)
-		end += sz // always increase end
-		if end < e.offs {
-			if i == 0 {
+		if (end + sz) < e.offs {
+			end += sz // always increase end
+			if !msgInit {
 				msg.Init(buf[:end], nil, nil) // no extra hdrs or contacts
+				msgInit = true
 			}
-			t.Logf("piece %d/%d: [%d - %d] sz %d\n", i, pieces, o, end, sz)
+			t.Logf("piece %d/%d: [%d - %d] sz %d\n", i+1, pieces, o, end, sz)
 			o, err = ParseSIPMsg(buf[:end], o, &msg, pflags)
 			if err != ErrHdrMoreBytes {
 				t.Errorf("ParseSIPMsg partial (%q, %d, ..)=[%d, %d(%q)] "+
@@ -359,9 +361,9 @@ func testParseMsgPieces(t *testing.T, buf []byte, offs int, e *msgTest,
 			break
 		}
 	}
-	t.Logf("pieces %d, rest [%d-%d] offs:%d minOffs: %d\n",
-		pieces, o, len(buf), offs, minOffs)
-	if pieces == 0 {
+	t.Logf("pieces %d, parsed [%d-%d] rest [%d-%d] last [%d-%d] minOffs: %d\n",
+		pieces, offs, end, end, len(buf), o, len(buf), minOffs)
+	if !msgInit {
 		msg.Init(buf, nil, nil) // no extra hdrs or contacts
 	}
 	// parse the rest

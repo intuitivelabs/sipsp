@@ -8,17 +8,23 @@ package sipsp
 
 import (
 	"bytes"
-	// fmt"
+	"fmt"
 	"math/rand"
 	"os"
 	"strings"
 	"testing"
+	"time"
 	//	"log"
 
 	"github.com/intuitivelabs/bytescase"
 )
 
+var seed int64
+
 func TestMain(m *testing.M) {
+	seed = time.Now().UnixNano()
+	rand.Seed(seed)
+	fmt.Printf("test random seed: 0x%x\n", seed)
 	res := m.Run()
 	os.Exit(res)
 }

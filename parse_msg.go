@@ -39,7 +39,7 @@ func (m *PSIPMsg) Reset() {
 	m.SIPMsgIState = SIPMsgIState{}
 }
 
-// Init initializes a PSIPMsg with a new message and empty array for
+// Init initializes a PSIPMsg with a new message and empty arrays for
 // holding the parsed headers and contacts values.
 // If some place holder arrays are nil, default 10-elements private arrays
 // will be used instead (PSIPMsg.hdrs or PSIPMsg.contacts).
@@ -58,7 +58,7 @@ func (m *PSIPMsg) Init(msg []byte, hdrs []Hdr, contacts []PFromBody) {
 	}
 }
 
-// Parsed returns true is the message if fully parsed
+// Parsed returns true if the message if fully parsed
 // (and no more input is needed).
 func (m *PSIPMsg) Parsed() bool {
 	return m.state == SIPMsgFIN
@@ -74,7 +74,7 @@ func (m *PSIPMsg) Request() bool {
 	return m.FL.Request()
 }
 
-// Method returns the numeric SIP method number.
+// Method returns the numeric SIP method.
 // If the message is a reply, the method from the CSeq header will be used.
 func (m *PSIPMsg) Method() SIPMethod {
 

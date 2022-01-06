@@ -156,11 +156,12 @@ func ParseSIPMsg(buf []byte, offs int, msg *PSIPMsg, flags uint8) (int, ErrorHdr
 		if msg.PV.CLen.Parsed() {
 			// skip  msg.PV.CLen.Len bytes
 			if (o + int(msg.PV.CLen.UIVal)) > len(buf) {
-				o = len(buf)
 				if (flags & SIPMsgNoMoreDataF) != 0 {
 					// allow truncated body
+					o = len(buf)
 					goto end
 				}
+				// keep start-of-body offset (we use it on success/fully body)
 				return o, ErrHdrMoreBytes
 			}
 			o += int(msg.PV.CLen.UIVal)

@@ -92,6 +92,12 @@ func TestParseOneContact(t *testing.T) {
 		{[]byte("*,<sip:foo@bar>\r\nX"), 0,
 			PFromBody{Star: true, Q: 0, Expires: 0},
 			1 /* \r offset */, ErrHdrBadChar},
+		{[]byte(" <sip:AQRM-3713h61f-000001@10.192.12.128;uniq=8193214A3133BC2612F6EF3C8BA1A>;expires, <sip:AQRM-3713h61f-000001@10.192.14.241;uniq=6916217A8341AB08C9A4FA2C8BD8A>;expires=600\r\nX"), 0,
+			PFromBody{Star: false, Q: 0, Expires: 0,
+				Name: PField{0, 0}, URI: PField{2, 73},
+				Params: PField{77, 7}, Tag: PField{0, 0},
+				V: PField{1, 83}},
+			85 /* '\r' offset */, ErrHdrMoreValues},
 	}
 	var c PFromBody
 	for _, tc := range tests {
@@ -190,6 +196,10 @@ func TestParseAllContactsValues(t *testing.T) {
 			PContacts{N: 3, MaxExpires: 5, MinExpires: 1,
 				LastHVal: PField{0, 0}},
 			0 /* \r offset */, ErrHdrOk},
+		{[]byte(" <sip:AQRM-3713h61f-000001@10.192.12.128;uniq=8193214A3133BC2612F6EF3C8BA1A>;expires, <sip:AQRM-3713h61f-000001@10.192.14.241;uniq=6916217A8341AB08C9A4FA2C8BD8A>;expires=600\r\nX"), 0,
+			PContacts{N: 2, MaxExpires: 600, MinExpires: 0,
+				LastHVal: PField{1, 172}},
+			0 /* offset auto-fill */, ErrHdrOk},
 	}
 	var c PContacts
 	// try with different parsed contacts array sizes

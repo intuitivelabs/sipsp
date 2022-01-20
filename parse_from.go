@@ -545,10 +545,13 @@ endOfHdr:
 		// 1 token => it's the uri (e.g. sip:foo@bar)
 		pfrom.URI.Set(s, i)
 		pfrom.V.Extend(i)
-	case fbNewParam, fbParamNameEnd, fbNewPossibleParam, fbPossibleParamNameEnd:
+	case fbNewParam, fbParamNameEnd, fbNewPossibleParam,
+		fbPossibleParamNameEnd, fbParamName, fbPossibleParamName:
 		// uri or possible uri already found, make sure the params end is set
 		//pfrom.Params.Set(int(pfrom.Params.Offs), i)
-		pfrom.Params.Extend(i)
+		if pfrom.Params.Offs != 0 {
+			pfrom.Params.Extend(i)
+		}
 		pfrom.V.Extend(i)
 	case fbParamValEnd, fbPossibleValEnd:
 		setFromParamVal(buf, pfrom)

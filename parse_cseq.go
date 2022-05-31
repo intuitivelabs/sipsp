@@ -96,7 +96,7 @@ func ParseCSeqVal(buf []byte, offs int, pcs *PCSeqBody) (int, ErrorHdr) {
 				}
 				fallthrough
 			case csInit, csEndDigit, csEnd:
-				n, crl, err = skipLWS(buf, i)
+				n, crl, err = skipLWS(buf, i, 0)
 				if err == 0 {
 					i = n
 					continue

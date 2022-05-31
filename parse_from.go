@@ -161,7 +161,7 @@ func ParseNameAddrPVal(h HdrT, buf []byte, offs int, pfrom *PFromBody) (int, Err
 					pfrom.V.Extend(i)
 					pfrom.state = fbNameOrURIEnd
 				}
-				n, crl, err = skipLWS(buf, i)
+				n, crl, err = skipLWS(buf, i, 0)
 				if err == 0 {
 					i = n
 					continue
@@ -256,7 +256,7 @@ func ParseNameAddrPVal(h HdrT, buf []byte, offs int, pfrom *PFromBody) (int, Err
 				}
 				goto moreBytes
 			case ' ', '\t', '\n', '\r':
-				n, crl, err = skipLWS(buf, i)
+				n, crl, err = skipLWS(buf, i, 0)
 				if err == 0 {
 					i = n
 					continue
@@ -283,7 +283,7 @@ func ParseNameAddrPVal(h HdrT, buf []byte, offs int, pfrom *PFromBody) (int, Err
 		case fbURIFound:
 			switch c {
 			case ' ', '\t', '\n', '\r':
-				n, crl, err = skipLWS(buf, i)
+				n, crl, err = skipLWS(buf, i, 0)
 				if err == 0 {
 					i = n
 					continue
@@ -308,7 +308,7 @@ func ParseNameAddrPVal(h HdrT, buf []byte, offs int, pfrom *PFromBody) (int, Err
 		case fbNewParam, fbNewPossibleParam, fbParamName, fbPossibleParamName:
 			switch c {
 			case ' ', '\t', '\n', '\r':
-				n, crl, err = skipLWS(buf, i)
+				n, crl, err = skipLWS(buf, i, 0)
 				if err == ErrHdrMoreBytes {
 					// keep state and keep the offset to point
 					// before the whitespace.
@@ -407,7 +407,7 @@ func ParseNameAddrPVal(h HdrT, buf []byte, offs int, pfrom *PFromBody) (int, Err
 		case fbNewParamVal, fbNewPossibleVal, fbParamVal, fbPossibleVal:
 			switch c {
 			case ' ', '\t', '\n', '\r':
-				n, crl, err = skipLWS(buf, i)
+				n, crl, err = skipLWS(buf, i, 0)
 				if err == ErrHdrMoreBytes {
 					// keep state and keep the offset to point
 					// before the whitespace.
@@ -498,7 +498,7 @@ func ParseNameAddrPVal(h HdrT, buf []byte, offs int, pfrom *PFromBody) (int, Err
 		case fbStar:
 			switch c {
 			case ' ', '\t', '\n', '\r':
-				n, crl, err = skipLWS(buf, i)
+				n, crl, err = skipLWS(buf, i, 0)
 				switch err {
 				case ErrHdrMoreBytes:
 					i = n

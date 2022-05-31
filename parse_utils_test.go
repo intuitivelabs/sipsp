@@ -80,7 +80,7 @@ func TestSkipLWS(t *testing.T) {
 		{[]byte("\r\n x"), 0, 3, 0, 0},
 	}
 	for _, tc := range tests {
-		o, l, err := skipLWS(tc.t, tc.offs)
+		o, l, err := skipLWS(tc.t, tc.offs, 0)
 		if err != tc.eErr {
 			t.Errorf("skipLWS(%q, %d)=[%d, %d, %d(%q)] expected error %d (%q)",
 				tc.t, tc.offs, o, l, err, err, tc.eErr, tc.eErr)

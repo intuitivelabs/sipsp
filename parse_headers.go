@@ -561,7 +561,7 @@ func ParseHdrLine(buf []byte, offs int, h *Hdr, hb PHBodies) (int, ErrorHdr) {
 			}
 		case hBodyStart:
 			var err ErrorHdr
-			i, crl, err = skipLWS(buf, i)
+			i, crl, err = skipLWS(buf, i, 0)
 			switch err {
 			case 0:
 				h.state = hVal
@@ -586,7 +586,7 @@ func ParseHdrLine(buf []byte, offs int, h *Hdr, hb PHBodies) (int, ErrorHdr) {
 			fallthrough
 		case hValEnd:
 			var err ErrorHdr
-			i, crl, err = skipLWS(buf, i)
+			i, crl, err = skipLWS(buf, i, 0)
 			switch err {
 			case 0:
 				h.state = hVal

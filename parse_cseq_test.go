@@ -72,7 +72,7 @@ func TestParseCSeqVal(t *testing.T) {
 			// should be the offset
 			iws := strings.IndexAny(c.method, " \t\r\n")
 			if iws > 0 {
-				iws, _, _ = skipLWS([]byte(c.method), iws)
+				iws, _, _ = skipLWS([]byte(c.method), iws, 0)
 				c.offs = len(fWS) + len(c.cseqN) + len(mWS) + iws
 			} else {
 				c.offs = len(fWS) + len(c.cseqN) + len(mWS) + len(c.method) +

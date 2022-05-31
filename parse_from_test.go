@@ -410,11 +410,11 @@ func cmpCaseLWS(b1, b2 []byte) bool {
 
 	lastCharDelim := false
 	// skip WS at the beginning
-	i, _, _ := skipLWS(b1, 0)
-	j, _, _ := skipLWS(b2, 0)
+	i, _, _ := skipLWS(b1, 0, 0)
+	j, _, _ := skipLWS(b2, 0, 0)
 	for (i < len(b1)) && (j < len(b2)) {
-		ws1Len, _, _ := skipLWS(b1[i:], 0)
-		ws2Len, _, _ := skipLWS(b2[j:], 0)
+		ws1Len, _, _ := skipLWS(b1[i:], 0, 0)
+		ws2Len, _, _ := skipLWS(b2[j:], 0, 0)
 		// if WS in one and not in the other and the last non WS was
 		// not a delim. (";")
 		if ((ws1Len > 0) != (ws2Len > 0)) && !lastCharDelim {
@@ -452,8 +452,8 @@ func cmpCaseLWS(b1, b2 []byte) bool {
 	}
 	if i < len(b1) || j < len(b2) { // still chars left in one of the strs.
 		// account for trailing whitespace (e.g: "ab" and "ab ")
-		ws1Len, _, _ := skipLWS(b1[i:], 0)
-		ws2Len, _, _ := skipLWS(b2[j:], 0)
+		ws1Len, _, _ := skipLWS(b1[i:], 0, 0)
+		ws2Len, _, _ := skipLWS(b2[j:], 0, 0)
 		i += ws1Len
 		j += ws2Len
 		if i < len(b1) || j < len(b2) {

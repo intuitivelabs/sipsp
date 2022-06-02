@@ -11,10 +11,11 @@ type POptFlags uint
 
 // parsing flags
 const (
-	POptNoneF        POptFlags = 0
-	POptTokCommaSepF POptFlags = 1 << iota // comma is a terminator
-	POptTokSpSepF                          // whitespace is a terminator
-	POptInputEndF                          // inputs end at end of buf
+	POptNoneF         POptFlags = 0
+	POptTokCommaTermF POptFlags = 1 << iota // comma is a terminator
+	POptTokQmTermF                          // '?' is a terminator
+	POptTokSpTermF                          // whitespace is a terminator
+	POptInputEndF                           // inputs end at end of buf
 )
 
 //skipLWS jumps over white space (including CRLF SP).

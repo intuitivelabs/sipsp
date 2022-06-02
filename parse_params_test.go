@@ -133,6 +133,23 @@ func TestParseTokenParam(t *testing.T) {
 		{t: []byte("test-1-2.foo.bar\r\nX"), offs: 0, flags: 0,
 			eAll: "test-1-2.foo.bar", eName: "test-1-2.foo.bar", eVal: "",
 			eOffs: 18, eErr: ErrHdrEOH},
+		{t: []byte("p20=v20&foo=bar\r\nX"), offs: 0, flags: POptParamAmpSepF,
+			eAll: "p20=v20", eName: "p20", eVal: "v20",
+			eOffs: 8, eErr: ErrHdrMoreValues},
+		{t: []byte("p21=v21&foo=bar\r\nX"), offs: 8, flags: POptParamAmpSepF,
+			eAll: "foo=bar", eName: "foo", eVal: "bar",
+			eOffs: 17, eErr: ErrHdrEOH},
+		{t: []byte(" p22 = v22 & foo = bar\r\nX"), offs: 0,
+			flags: POptParamAmpSepF,
+			eAll:  "p22 = v22", eName: "p22", eVal: "v22",
+			eOffs: 13, eErr: ErrHdrMoreValues},
+		{t: []byte("p23&foo=bar\r\nX"), offs: 0, flags: POptParamAmpSepF,
+			eAll: "p23", eName: "p23", eVal: "",
+			eOffs: 4, eErr: ErrHdrMoreValues},
+		{t: []byte(" p24 = v24 ; foo = bar\r\nX"), offs: 0,
+			flags: POptParamAmpSepF,
+			eAll:  "p24 = v24", eName: "p24", eVal: "v24",
+			eOffs: 11, eErr: ErrHdrBadChar},
 	}
 
 	var param PTokParam

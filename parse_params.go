@@ -152,6 +152,11 @@ func tokAllowedChar(c byte) bool {
 func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 	flags POptFlags) (int, ErrorHdr) {
 
+	sep := byte(';') // default
+	if flags&POptParamAmpSepF != 0 {
+		sep = byte('&')
+	}
+
 	// internal state
 	const (
 		paramInit uint8 = iota
@@ -159,7 +164,7 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 		paramFEq
 		paramFVal
 		paramVal
-		paramFSemi
+		paramFSep
 		paramFNxt
 		paramInitNxtVal // more for nice debugging
 		paramQuotedVal
@@ -203,8 +208,6 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 					goto endOfHdr
 				}
 				return n, err
-			case ';':
-			// do nothing, allow empty params, just skip them
 
 			/* allowed chars handled in tokAllowedChar()
 			case '/', ':', '@', '=', "+", "$", ",":
@@ -213,6 +216,10 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 				return i, ErrHdrBadChar
 			*/
 			default:
+				if c == sep {
+					// do nothing, allow empty params, just skip them
+					break
+				}
 				if !tokAllowedChar(c) {
 					param.state = paramERR
 					return i, ErrHdrBadChar
@@ -244,11 +251,6 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 					goto endOfHdr
 				}
 				return n, err
-			case ';':
-				// param with no value found, allow
-				param.Name.Extend(i)
-				param.All.Extend(i)
-				param.state = paramFNxt
 			case '=':
 				param.Name.Extend(i)
 				param.All.Extend(i + 1)
@@ -271,13 +273,20 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 				return i, ErrHdrBadChar
 			*/
 			default:
+				if c == sep {
+					// param with no value found, allow
+					param.Name.Extend(i)
+					param.All.Extend(i)
+					param.state = paramFNxt
+					break
+				}
 				if !tokAllowedChar(c) {
 					param.state = paramERR
 					return i, ErrHdrBadChar
 				}
 				// do nothing
 			}
-		case paramFEq: // look for '=' | ';' |','
+		case paramFEq: // look for '=' | sep |','
 			switch c {
 			case ' ', '\t', '\n', '\r':
 				n, crl, err = skipLWS(buf, i, flags)
@@ -295,9 +304,6 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 					goto endOfHdr
 				}
 				return n, err
-			case ';':
-				// param with no value found, allow
-				param.state = paramFNxt
 			case '=':
 				param.state = paramFVal
 			case ',':
@@ -316,6 +322,11 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 				return i, ErrHdrBadChar
 			*/
 			default:
+				if c == sep {
+					// param with no value found, allow
+					param.state = paramFNxt
+					break
+				}
 				if !tokAllowedChar(c) {
 					param.state = paramERR
 					return i, ErrHdrBadChar
@@ -331,7 +342,7 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 						return i, ErrHdrOk
 					}
 				}
-				// looking for '=' or ';', but found another token => error
+				// looking for '=' or sep, but found another token => error
 				param.state = paramERR
 				return i, ErrHdrBadChar
 			}
@@ -353,11 +364,6 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 					goto endOfHdr
 				}
 				return n, err
-			case ';':
-				// empty val (allow)
-				param.Val.Set(i, i)
-				param.All.Extend(i)
-				param.state = paramFNxt
 			case ',':
 				if flags&POptTokCommaTermF != 0 {
 					// empty val (allow)
@@ -380,6 +386,13 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 				return i, ErrHdrBadChar
 			*/
 			default:
+				if c == sep {
+					// empty val (allow)
+					param.Val.Set(i, i)
+					param.All.Extend(i)
+					param.state = paramFNxt
+					break
+				}
 				if !tokAllowedChar(c) {
 					param.state = paramERR
 					return i, ErrHdrBadChar
@@ -397,7 +410,7 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 					// whitespace
 					goto moreBytes
 				}
-				param.state = paramFSemi
+				param.state = paramFSep
 				param.Val.Extend(i)
 				param.All.Extend(i)
 				if err == 0 {
@@ -408,11 +421,6 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 					goto endOfHdr
 				}
 				return n, err
-			case ';':
-				// empty val (allow)
-				param.Val.Extend(i)
-				param.All.Extend(i)
-				param.state = paramFNxt
 			case ',':
 				if flags&POptTokCommaTermF != 0 {
 					// empty val (allow)
@@ -432,6 +440,13 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 				return i, ErrHdrBadChar
 			*/
 			default:
+				if c == sep {
+					// empty val (allow)
+					param.Val.Extend(i)
+					param.All.Extend(i)
+					param.state = paramFNxt
+					break
+				}
 				if !tokAllowedChar(c) {
 					param.state = paramERR
 					return i, ErrHdrBadChar
@@ -448,14 +463,14 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 				i = n
 				param.Val.Extend(i)
 				param.All.Extend(i)
-				param.state = paramFSemi
+				param.state = paramFSep
 				continue
 			}
 			if err == ErrHdrEOH {
 				goto endOfHdr
 			}
 			return n, err
-		case paramFSemi: // look for ';' | ',' |' ' tok   after param value
+		case paramFSep: // look for sep | ',' |' ' tok   after param value
 			switch c {
 			case ' ', '\t', '\n', '\r':
 				n, crl, err = skipLWS(buf, i, flags)
@@ -473,8 +488,6 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 					goto endOfHdr
 				}
 				return n, err
-			case ';':
-				param.state = paramFNxt
 			case ',':
 				if flags&POptTokCommaTermF != 0 {
 					param.state = paramFIN
@@ -491,6 +504,10 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 				return i, ErrHdrBadChar
 			*/
 			default:
+				if c == sep {
+					param.state = paramFNxt
+					break
+				}
 				if !tokAllowedChar(c) {
 					param.state = paramERR
 					return i, ErrHdrBadChar
@@ -506,7 +523,7 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 						return i, ErrHdrOk
 					}
 				}
-				// looking for '=' or ';', but found another token => error
+				// looking for '=' or sep, but found another token => error
 				param.state = paramERR
 				return i, ErrHdrBadChar
 			}
@@ -520,7 +537,7 @@ moreBytes:
 	//  last \n or \r before end of buf -- len(buf) -1)
 	if flags&POptInputEndF != 0 { // end of input - force end of headers
 		switch param.state {
-		case paramInit, paramInitNxtVal, paramFNxt, paramFSemi,
+		case paramInit, paramInitNxtVal, paramFNxt, paramFSep,
 			paramFVal, paramFEq:
 			// do nothing
 		case paramName:
@@ -565,7 +582,7 @@ endOfHdr: // end of header found
 	case paramInit, paramInitNxtVal:
 		// end of header without finding a param = > empty
 		return n + crl, ErrHdrEOH
-	case paramFNxt, paramName, paramFEq, paramFVal, paramVal, paramFSemi:
+	case paramFNxt, paramName, paramFEq, paramFVal, paramVal, paramFSep:
 		param.state = paramFIN
 	default:
 		param.state = paramERR

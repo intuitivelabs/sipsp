@@ -16,6 +16,8 @@ const (
 	POptTokQmTermF                          // '?' is a terminator
 	POptTokSpTermF                          // whitespace is a terminator
 	POptInputEndF                           // inputs end at end of buf
+	POptParamSemiSepF                       // param. separator is ';'
+	POptParamAmpSepF                        // param. separator is '&'
 )
 
 //skipLWS jumps over white space (including CRLF SP).

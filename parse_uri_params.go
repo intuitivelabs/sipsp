@@ -16,8 +16,8 @@ type URIParamF uint
 
 // URI parameters flags values
 
+const URIParamNone URIParamF = 0 // not "parsed"
 const (
-	URIParamNone       URIParamF = 0 // not "parsed"
 	URIParamTransportF URIParamF = 1 << iota
 	URIParamUserF
 	URIParamMethodF
@@ -110,7 +110,7 @@ func (l *URIParamsLst) Init(pbuf []URIParam) {
 }
 
 // Empty returns true if no parameters have been parsed.
-func (l *URIParamsLst) Emptry() bool {
+func (l *URIParamsLst) Empty() bool {
 	return l.N == 0
 }
 
@@ -141,7 +141,7 @@ func ParseAllURIParams(buf []byte, offs int, l *URIParamsLst,
 		}
 		next, err = ParseTokenParam(buf, offs, &p.Param, flags)
 		switch err {
-		case 0, ErrHdrMoreValues:
+		case 0, ErrHdrMoreValues, ErrHdrEOH:
 			p.T = URIParamResolve(p.Param.Name.Get(buf))
 			l.Types |= p.T
 			vNo++

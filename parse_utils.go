@@ -10,8 +10,8 @@ package sipsp
 type POptFlags uint
 
 // parsing flags
+const POptNoneF POptFlags = 0
 const (
-	POptNoneF         POptFlags = 0
 	POptTokCommaTermF POptFlags = 1 << iota // comma is a terminator
 	POptTokQmTermF                          // '?' is a terminator
 	POptTokSpTermF                          // whitespace is a terminator

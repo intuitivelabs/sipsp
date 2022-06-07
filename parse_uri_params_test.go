@@ -75,7 +75,7 @@ func TestParseAllURIParams(t *testing.T) {
 			f: POptTokURIParamF | POptInputEndF,
 			eRes: expR{err: ErrHdrOk,
 				types: URIParamOtherF | URIParamTransportF,
-				n:     2, offs: 32},
+				n:     2, offs: 29},
 		},
 		{s: "transport=udp;other?hdr1", offs: 0,
 			f: POptTokQmTermF,
@@ -97,6 +97,24 @@ func TestParseAllURIParams(t *testing.T) {
 				" err %d (%s) != expected %d (%s) (test case %d)",
 				tc.s, tc.offs, &plst, tc.f, offs, n, err, err,
 				err, err, tc.eRes.err, tc.eRes.err, i+1)
+		}
+		if plst.Types != tc.eRes.types {
+			t.Errorf("ParseAllURIParams(%q, %d, %p, 0x%x) = %d, %d, %d(%s) "+
+				" types 0x%x  != expected 0x%x (test case %d)",
+				tc.s, tc.offs, &plst, tc.f, offs, n, err, err,
+				plst.Types, tc.eRes.types, i+1)
+		}
+		if plst.N != tc.eRes.n {
+			t.Errorf("ParseAllURIParams(%q, %d, %p, 0x%x) = %d, %d, %d(%s) "+
+				" param no %d  != expected %d (test case %d)",
+				tc.s, tc.offs, &plst, tc.f, offs, n, err, err,
+				plst.N, tc.eRes.n, i+1)
+		}
+		if offs != tc.eRes.offs {
+			t.Errorf("ParseAllURIParams(%q, %d, %p, 0x%x) = %d, %d, %d(%s) "+
+				" offs %d  != expected %d (test case %d)",
+				tc.s, tc.offs, &plst, tc.f, offs, n, err, err,
+				offs, tc.eRes.offs, i+1)
 		}
 		plst.Reset()
 	}

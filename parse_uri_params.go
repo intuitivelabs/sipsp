@@ -162,3 +162,65 @@ func ParseAllURIParams(buf []byte, offs int, l *URIParamsLst,
 	}
 	return next, vNo, err
 }
+
+// URIParamsLstEq returns true if 2 parsed uri parameters lists are equal
+// according  to rfc3261 19.1.4.
+//
+// Each URIParamLst is accompanied by its []byte buffer in which it points.
+func URIParamsLstEq(
+	l1 *URIParamsLst, buf1 []byte,
+	l2 *URIParamsLst, buf2 []byte) bool {
+
+	const bmask = URIParamUserF | URIParamTTLF | URIParamMethodF |
+		URIParamMaddrF
+
+	// user, ttl, method & maddr that appear in only one uri, never
+	// match
+	if (l1.Types & bmask) != (l2.Types & bmask) {
+		return false
+	}
+	// slow matching: if a parameter is present in both uris, it must match,
+	//               all other appearing in only one uri
+	//               (not in bmask above) are ignored
+	for i := 0; i < l1.PNo(); i++ {
+		for j := 0; j < l2.PNo(); j++ {
+			if l1.Params[i].T == l2.Params[j].T &&
+				(l1.Params[i].T != URIParamOtherF ||
+					bytescase.CmpEq(l1.Params[i].Param.Name.Get(buf1),
+						l2.Params[j].Param.Name.Get(buf2))) {
+				if !bytescase.CmpEq(l1.Params[i].Param.Val.Get(buf1),
+					l2.Params[j].Param.Val.Get(buf2)) {
+					return false
+				}
+				break
+			}
+		}
+	}
+	return true
+}
+
+// URIParamsEq will parse & compare a uri parameteres list
+func URIParamsEq(
+	buf1 []byte, offs1 int,
+	buf2 []byte, offs2 int) (bool, ErrorHdr) {
+
+	const flags = POptTokURIParamF | POptInputEndF
+
+	// temporary params lists
+	// TODO: adapt size
+	var plst1, plst2 URIParamsLst
+	var pbuf1, pbuf2 [100]URIParam
+
+	plst1.Init(pbuf1[:])
+	plst2.Init(pbuf2[:])
+
+	_, _, err1 := ParseAllURIParams(buf1, offs1, &plst1, flags)
+	if err1 != ErrHdrOk && err1 != ErrHdrEOH {
+		return false, err1
+	}
+	_, _, err2 := ParseAllURIParams(buf2, offs2, &plst2, flags)
+	if err2 != ErrHdrOk && err2 != ErrHdrEOH {
+		return false, err2
+	}
+	return URIParamsLstEq(&plst1, buf1, &plst2, buf2), ErrHdrOk
+}

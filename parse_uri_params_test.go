@@ -119,3 +119,74 @@ func TestParseAllURIParams(t *testing.T) {
 		plst.Reset()
 	}
 }
+
+func TestURIParamsEq(t *testing.T) {
+
+	type expR struct {
+		err ErrorHdr
+		res bool
+	}
+	type testCase struct {
+		s1    string // param list 1
+		s2    string // param list 2
+		offs1 int    // offset in s1
+		offs2 int    // offset in s2
+		eRes  expR   // expected result
+	}
+
+	testCases := [...]testCase{
+		{
+			s1:   "foo=1;bar;transport=tcp;TTL=10;lr",
+			s2:   "foo=1;bar;transport=tcp;TTL=10;lr",
+			eRes: expR{err: ErrHdrOk, res: true},
+		},
+		{
+			s1:   "foo=1;bar;transport=tcp;TTL=10;lr",
+			s2:   "TTL=10;transport=tcp;bar;lr;foo=1",
+			eRes: expR{err: ErrHdrOk, res: true},
+		},
+		{
+			s1:   "foo=1;bar;transport=tcp;TTL=10;lr",
+			s2:   "TTL=10;transport=tcp",
+			eRes: expR{err: ErrHdrOk, res: true},
+		},
+		{
+			s1:   "foo=1;bar;transport=tcp;lr", // no TTL
+			s2:   "TTL=10;transport=tcp",
+			eRes: expR{err: ErrHdrOk, res: false},
+		},
+		{
+			s1:   "foo=1;bar;transport=tcp;TTL=10;lr",
+			s2:   "foo=1;bar;transport=udp;TTL=10;lr", // diff transport
+			eRes: expR{err: ErrHdrOk, res: false},
+		},
+		{
+			s1:   "foo=1;bar;transport=tcp;TTL=10;lr",
+			s2:   "TTL=10;transport=tcp;bar;lr;foo=2", // diff foo
+			eRes: expR{err: ErrHdrOk, res: false},
+		},
+		{
+			s1:   "foo=1;bar=baz;transport=tcp;TTL=10;lr", // diff bar
+			s2:   "TTL=10;transport=tcp;bar;lr;foo=1",
+			eRes: expR{err: ErrHdrOk, res: false},
+		},
+	}
+
+	for i, tc := range testCases {
+		res, err := URIParamsEq([]byte(tc.s1), tc.offs1,
+			[]byte(tc.s2), tc.offs2)
+
+		if err != tc.eRes.err {
+			t.Errorf("URIParamsEq(%q, %d, %q, %d) = %v,  %d (%s) "+
+				" err %d (%s) != expected %d (%s) (test case %d)",
+				tc.s1, tc.offs1, tc.s2, tc.offs2, res, err, err,
+				err, err, tc.eRes.err, tc.eRes.err, i+1)
+		}
+		if res != tc.eRes.res {
+			t.Errorf("URIParamsEq(%q, %d, %q, %d) = %v,  %d (%s) "+
+				" res %v != expected %v (test case %d)",
+				tc.s1, tc.offs1, tc.s2, tc.offs2, res, err, err,
+				res, tc.eRes.res, i+1)
+		}
+	}
+}

@@ -1,4 +1,4 @@
-// Copyright 2021 Intuitive Labs GmbH. All rights reserved.
+// Copyright 2022 Intuitive Labs GmbH. All rights reserved.
 //
 // Use of this source code is governed by a BSD-style license
 // that can be found in the LICENSE_BSD.txt file in the root of the source
@@ -97,7 +97,7 @@ moreBytes:
 }
 
 // returns true if c is an allowed ascii char inside a token name or value
-func tokAllowedChar(c byte) bool {
+func tokAllowedChar(c byte, flags POptFlags) bool {
 	if c <= 32 || c >= 127 {
 		// no ctrl chars,  non visible chars or white space allowed
 		// (see rfc7230 3.2.6)
@@ -119,9 +119,15 @@ func tokAllowedChar(c byte) bool {
 	case '[', ']', '/', ':', '+', '$':
 		return true
 	case '&':
-		return true // TODO: if param
+		if flags&POptTokURIParamF != 0 {
+			return true // if param
+		}
+		return false
 	case '?':
-		return false // TODO: false if param, true if uri header part
+		if flags&POptTokURIParamF != 0 {
+			return false // if param, false
+		}
+		return true // if uri header part
 	}
 	return false
 }
@@ -138,7 +144,7 @@ func tokAllowedChar(c byte) bool {
 // will be the start of the next parameter (after ';' and possible whitespace)
 // and the returned error will be ErrHdrMoreValues.
 // Return values:
-//  - offs, ErrHdrOK - parsed full param and this is the last parameter. offs is // the offset of the next token separator or past the end of the buffer.
+//  - offs, ErrHdrOk - parsed full param and this is the last parameter. offs is // the offset of the next token separator or past the end of the buffer.
 //  - offs. ErrHdrEOH - parsed full param and encountered end of header
 //  (\r\nX). offs points at the first char after the end of header or past
 //   the end of buffer.
@@ -153,8 +159,19 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 	flags POptFlags) (int, ErrorHdr) {
 
 	sep := byte(';') // default
-	if flags&POptParamAmpSepF != 0 {
+	term := byte(0)  // default end of params char (0 == none)
+	if flags&(POptParamAmpSepF|POptTokURIHdrF) != 0 {
 		sep = byte('&')
+	} else if flags&(POptParamSemiSepF|POptTokURIParamF) != 0 {
+		sep = byte(';')
+	}
+
+	if flags&(POptTokQmTermF|POptTokURIParamF) != 0 {
+		term = byte('?')
+	} else if flags&POptTokCommaTermF != 0 {
+		term = byte(',')
+	} else if flags&POptTokSpTermF != 0 {
+		term = byte(0) // space term is handled differently
 	}
 
 	// internal state
@@ -220,7 +237,7 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 					// do nothing, allow empty params, just skip them
 					break
 				}
-				if !tokAllowedChar(c) {
+				if !tokAllowedChar(c, flags) {
 					param.state = paramERR
 					return i, ErrHdrBadChar
 				}
@@ -255,24 +272,13 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 				param.Name.Extend(i)
 				param.All.Extend(i + 1)
 				param.state = paramFVal
-			case ',':
-				if flags&POptTokCommaTermF != 0 {
+			default:
+				if c == term && term != 0 {
 					param.Name.Extend(i)
 					param.All.Extend(i)
 					param.state = paramFIN
 					return i, ErrHdrOk
 				}
-				// param name contains un-allowed char
-				param.state = paramERR
-				return i, ErrHdrBadChar
-
-			/* allowed chars handled in tokAllowedChar()
-			case '/', ':', '@', '=', "+", "$", ",":
-				// param name starts with un-allowed char
-				param.state = paramERR
-				return i, ErrHdrBadChar
-			*/
-			default:
 				if c == sep {
 					// param with no value found, allow
 					param.Name.Extend(i)
@@ -280,7 +286,7 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 					param.state = paramFNxt
 					break
 				}
-				if !tokAllowedChar(c) {
+				if !tokAllowedChar(c, flags) {
 					param.state = paramERR
 					return i, ErrHdrBadChar
 				}
@@ -306,28 +312,17 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 				return n, err
 			case '=':
 				param.state = paramFVal
-			case ',':
-				if flags&POptTokCommaTermF != 0 {
+			default:
+				if c == term && term != 0 {
 					param.state = paramFIN
 					return i, ErrHdrOk
 				}
-				// param name contains un-allowed char
-				param.state = paramERR
-				return i, ErrHdrBadChar
-
-			/* allowed chars handled in tokAllowedChar()
-			case '/', ':', '@', '=', "+", "$", ",":
-				// param name starts with un-allowed char
-				param.state = paramERR
-				return i, ErrHdrBadChar
-			*/
-			default:
 				if c == sep {
 					// param with no value found, allow
 					param.state = paramFNxt
 					break
 				}
-				if !tokAllowedChar(c) {
+				if !tokAllowedChar(c, flags) {
 					param.state = paramERR
 					return i, ErrHdrBadChar
 				}
@@ -364,28 +359,18 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 					goto endOfHdr
 				}
 				return n, err
-			case ',':
-				if flags&POptTokCommaTermF != 0 {
-					// empty val (allow)
-					param.Val.Set(i, i)
-					param.state = paramFIN
-					return i, ErrHdrOk
-				}
-				// param name contains un-allowed char
-				param.state = paramERR
-				return i, ErrHdrBadChar
 			case '"':
 				param.Val.Set(i, i)
 				param.All.Extend(i)
 				param.state = paramQuotedVal
 
-			/* allowed chars handled in tokAllowedChar()
-			case '/', ':', '@', '=', "+", "$", ",":
-				// param name starts with un-allowed char
-				param.state = paramERR
-				return i, ErrHdrBadChar
-			*/
 			default:
+				if c == term && term != 0 {
+					// empty val (allow)
+					param.Val.Set(i, i)
+					param.state = paramFIN
+					return i, ErrHdrOk
+				}
 				if c == sep {
 					// empty val (allow)
 					param.Val.Set(i, i)
@@ -393,7 +378,7 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 					param.state = paramFNxt
 					break
 				}
-				if !tokAllowedChar(c) {
+				if !tokAllowedChar(c, flags) {
 					param.state = paramERR
 					return i, ErrHdrBadChar
 				}
@@ -421,25 +406,14 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 					goto endOfHdr
 				}
 				return n, err
-			case ',':
-				if flags&POptTokCommaTermF != 0 {
+			default:
+				if c == term && term != 0 {
 					// empty val (allow)
 					param.Val.Extend(i)
 					param.All.Extend(i)
 					param.state = paramFIN
 					return i, ErrHdrOk
 				}
-				// param name contains un-allowed char
-				param.state = paramERR
-				return i, ErrHdrBadChar
-
-			/* allowed chars handled in tokAllowedChar()
-			case '/', ':', '@', '=', "+", "$", ",":
-				// param name starts with un-allowed char
-				param.state = paramERR
-				return i, ErrHdrBadChar
-			*/
-			default:
 				if c == sep {
 					// empty val (allow)
 					param.Val.Extend(i)
@@ -447,7 +421,7 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 					param.state = paramFNxt
 					break
 				}
-				if !tokAllowedChar(c) {
+				if !tokAllowedChar(c, flags) {
 					param.state = paramERR
 					return i, ErrHdrBadChar
 				}
@@ -488,27 +462,16 @@ func ParseTokenParam(buf []byte, offs int, param *PTokParam,
 					goto endOfHdr
 				}
 				return n, err
-			case ',':
-				if flags&POptTokCommaTermF != 0 {
+			default:
+				if c == term && term != 0 {
 					param.state = paramFIN
 					return i, ErrHdrOk
 				}
-				// unexpected ',' after param value (if ',' not allowed as sep)
-				param.state = paramERR
-				return i, ErrHdrBadChar
-
-			/* allowed chars handled in tokAllowedChar()
-			case '/', ':', '@', '=', "+", "$", ",":
-				// param name starts with un-allowed char
-				param.state = paramERR
-				return i, ErrHdrBadChar
-			*/
-			default:
 				if c == sep {
 					param.state = paramFNxt
 					break
 				}
-				if !tokAllowedChar(c) {
+				if !tokAllowedChar(c, flags) {
 					param.state = paramERR
 					return i, ErrHdrBadChar
 				}

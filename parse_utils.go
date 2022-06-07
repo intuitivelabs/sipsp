@@ -18,6 +18,8 @@ const (
 	POptInputEndF                           // inputs end at end of buf
 	POptParamSemiSepF                       // param. separator is ';'
 	POptParamAmpSepF                        // param. separator is '&'
+	POptTokURIParamF                        // parse as uri param
+	POptTokURIHdrF                          //  parse as uri hdr ('&' sep)
 )
 
 //skipLWS jumps over white space (including CRLF SP).

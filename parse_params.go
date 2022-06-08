@@ -110,7 +110,8 @@ func tokAllowedChar(c byte, flags POptFlags) bool {
 		return true
 	}
 	switch c {
-	case '-', '_', '.', '!', '~', '*', '\'', '(', ')':
+	// unreserved marks + escape (%)
+	case '-', '_', '.', '!', '~', '*', '\'', '(', ')', '%':
 		return true
 
 	// more valid chars for

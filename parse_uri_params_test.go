@@ -54,6 +54,17 @@ func TestParseAllURIParams(t *testing.T) {
 	}
 
 	testCases := [...]testCase{
+		{s: "method=REGISTER;transport=tcp", f: POptInputEndF,
+			eRes: expR{err: ErrHdrEOH,
+				types: URIParamTransportF | URIParamMethodF,
+				n:     2, offs: 29},
+		},
+		{s: "transport=tcp;method=REGISTER?to=sip:bob%40biloxi.com",
+			f: POptTokURIParamF | POptInputEndF,
+			eRes: expR{err: ErrHdrOk,
+				types: URIParamTransportF | URIParamMethodF,
+				n:     2, offs: 29},
+		},
 		{s: "foo=1;bar;transport=tcp;TTL=10;lr", f: POptInputEndF,
 			eRes: expR{err: ErrHdrEOH,
 				types: URIParamOtherF | URIParamTransportF | URIParamTTLF |
@@ -135,6 +146,41 @@ func TestURIParamsEq(t *testing.T) {
 	}
 
 	testCases := [...]testCase{
+		{
+			s1:   "",
+			s2:   "",
+			eRes: expR{err: ErrHdrOk, res: true},
+		},
+		{
+			s1:   "",
+			s2:   "newparam=5",
+			eRes: expR{err: ErrHdrOk, res: true},
+		},
+		{
+			s1:   "security=on",
+			s2:   "",
+			eRes: expR{err: ErrHdrOk, res: true},
+		},
+		{
+			s1:   "security=on",
+			s2:   "newparam=5",
+			eRes: expR{err: ErrHdrOk, res: true},
+		},
+		{
+			s1:   "transport=tcp;method=REGISTER",
+			s2:   "method=REGISTER;transport=tcp",
+			eRes: expR{err: ErrHdrOk, res: true},
+		},
+		{
+			s1:   "transport=tcp;method=REGISTER?subject=prj%20x&priority=u",
+			s2:   "method=REGISTER;transport=tcp?subject=prj%20x&priority=u",
+			eRes: expR{err: ErrHdrOk, res: true},
+		},
+		{
+			s1:   "transport=tcp;method=REGISTER?subject=prj%20x&priority=u",
+			s2:   "method=REGISTER;transport=tcp",
+			eRes: expR{err: ErrHdrOk, res: true},
+		},
 		{
 			s1:   "foo=1;bar;transport=tcp;TTL=10;lr",
 			s2:   "foo=1;bar;transport=tcp;TTL=10;lr",

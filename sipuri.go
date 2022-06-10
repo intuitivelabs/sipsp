@@ -13,8 +13,6 @@ import (
 	"github.com/intuitivelabs/bytescase"
 )
 
-// TODO: unit test
-
 // SIPStr is the "string" type used by all the sip parsing functions.
 type SIPStr []byte
 
@@ -187,12 +185,16 @@ type URICmpFlags uint8
 
 // URICmpFlags flags values.
 const (
-	URICmpDefault  URICmpFlags = 0
-	URICmpAll      URICmpFlags = 0
+	URICmpDefault URICmpFlags = 0
+	URICmpAll     URICmpFlags = 0
+)
+const (
 	URICmpSkipPort URICmpFlags = 1 << iota
 	URICmpSkipScheme
 	URICmpSkipUser
 	URICmpSkipPass
+	URICmpSkipParams
+	URICmpSkipHeaders
 )
 
 // URICmpShort compares 2 "shortened" uris (up to port, not including
@@ -214,6 +216,59 @@ func URICmpShort(u1 *PsipURI, buf1 []byte, u2 *PsipURI, buf2 []byte,
 		((flags&URICmpSkipPass) != 0 ||
 			bytes.Equal(u1.Pass.Get(buf1), u2.Pass.Get(buf2))) &&
 		bytescase.CmpEq(u1.Host.Get(buf1), u2.Host.Get(buf2))
+}
+
+// URICmp compares 2 URIs, taking into account the passed flags.
+// Parameters: u1 is a parsed sip uri, buf1 contains the data to which
+// u1 fields point to, u2 and buf2 contain the other uri and flags can
+// change how the uri will be compared (see URICmpFlags above).
+func URICmp(u1 *PsipURI, buf1 []byte, u2 *PsipURI, buf2 []byte,
+	flags URICmpFlags) bool {
+	ret := URICmpShort(u1, buf1, u2, buf2, flags)
+	if ret && (flags&URICmpSkipParams) == 0 {
+		ok, _ := URIParamsEq(u1.Params.Get(buf1), 0, u2.Params.Get(buf2), 0)
+		ret = ok
+	}
+	if ret && (flags&URICmpSkipHeaders) == 0 {
+		ok, _ := URIHdrsEq(u1.Headers.Get(buf1), 0, u2.Headers.Get(buf2), 0)
+		ret = ok
+	}
+	return ret
+}
+
+// URIParseCmp parses 2 []byte string as URIs and compares them.
+// If r1 and r2 are not nil, they will be filled with the parsed URI
+// (saving a ParseURI() call).
+// It returns true if the URI are equal (taking into account the flags),
+// a possible parse error and the URI for which the parsing failed (0 or 1).
+func URIParseCmp(rawURI1 []byte, rawURI2 []byte, flags URICmpFlags,
+	r1 *PsipURI, r2 *PsipURI) (bool, ErrorURI, int) {
+
+	var uri1, uri2 PsipURI
+
+	if err, _ := ParseURI(rawURI1, &uri1); err != NoURIErr {
+		return false, err, 0
+	}
+	if r1 != nil {
+		*r1 = uri1
+	}
+	if err, _ := ParseURI(rawURI2, &uri2); err != NoURIErr {
+		return false, err, 1
+	}
+	if r2 != nil {
+		*r2 = uri1
+	}
+	return URICmp(&uri1, rawURI1, &uri2, rawURI2, flags), NoURIErr, 0
+}
+
+// URIRawCmp compares 2 un-parsed URIs.
+// It is similar to URIParseCmp(), but doesn't return the parsed URIs.
+// It returns true if the URIs match (according to the passed flags) and
+// an error if one of the URI parsing failed and the number of the URI
+// for which the parsing failed (0 or 1).
+func URIRawCmp(rawURI1 []byte, rawURI2 []byte,
+	flags URICmpFlags) (bool, ErrorURI, int) {
+	return URIParseCmp(rawURI1, rawURI2, flags, nil, nil)
 }
 
 // ParseURI parses a sip uri into a PSIPUri structure.

@@ -93,6 +93,14 @@ func (u *PsipURI) Reset() {
 // Flat returns a byte slices containing the uri in "string" form.
 func (u *PsipURI) Flat(buf []byte) []byte {
 
+	r := u.Long() // full URI
+	return r.Get(buf)
+}
+
+// Long returns a PField containing the complete URI
+// (including parameters & headers).
+func (u *PsipURI) Long() PField {
+
 	var r PField
 
 	if u.Headers.Len > 0 {
@@ -108,7 +116,7 @@ func (u *PsipURI) Flat(buf []byte) []byte {
 	} else if u.User.Len > 0 {
 		r.Set(int(u.Scheme.Offs), int(u.User.Offs+u.User.Len))
 	}
-	return r.Get(buf)
+	return r
 }
 
 // Short returns a "shortened" uri form, good for comparisons.

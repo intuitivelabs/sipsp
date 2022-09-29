@@ -99,9 +99,14 @@ const (
 	SigHasAtF    // @
 	SigHasDotF   // .
 	SigHasColonF // :
-	SigHasEqF    // =
 	SigHasDashF  // -
+	SigHasStarF  // *
+	SigHasDivF   // /
+	SigHasPlusF  // +
+	SigHasEqF    // =
 	SigHasUnderF // _
+	SigHexEncF   // hex encoding
+	SigB64EncF   // base 64 encoding
 )
 
 // MsgSig contains the message signature.
@@ -212,26 +217,94 @@ func GetMsgSig(msg *PSIPMsg) (MsgSig, ErrorHdr) {
 	return sig, ErrHdrOk
 }
 
+func resCharSigFlag(c byte) (sig StrSigId) {
+	switch c {
+	case '@':
+		sig |= SigHasAtF
+	case '.':
+		sig |= SigHasDotF
+	case ':':
+		sig |= SigHasColonF
+	case '-':
+		sig |= SigHasDashF
+	case '_':
+		sig |= SigHasUnderF
+	case '*':
+		sig |= SigHasStarF
+	case '+':
+		sig |= SigHasPlusF
+	case '/':
+		sig |= SigHasDivF
+	case '=':
+		sig |= SigHasEqF
+	}
+	return
+}
+
 func getStrCharsSig(s []byte, skipOffs, skipLen int) StrSigId {
 	var sig StrSigId
+	base64 := true
+	hex := true
+	dec := true
+	fLowerCase := false
+	fUpperCase := false
+	skipChrs := 0 // extra chars skipped
 	for i := 0; i < len(s); i++ {
 		if i >= skipOffs && i < (skipOffs+skipLen) {
 			// ignore this part
 			continue
 		}
-		switch s[i] {
-		case '@':
-			sig |= SigHasAtF
-		case '.':
-			sig |= SigHasDotF
-		case ':':
-			sig |= SigHasColonF
-		case '=':
-			sig |= SigHasEqF
-		case '-':
-			sig |= SigHasDashF
-		case '_':
-			sig |= SigHasUnderF
+		if f := resCharSigFlag(s[i]); f != 0 {
+			sig |= f
+			// ip@something -> ignore '@' or other reserved char immediately
+			// after an ip, in hex or base64 guessing
+			if skipLen != 0 && (i != skipOffs+skipLen && i != (skipOffs-1)) {
+				// not immediately after or before an ip
+				if base64 && !(s[i] == '+' || s[i] == '/' || s[i] == '=') {
+					// special char different from + / =  => not base64
+					base64 = false
+				} else if base64 && s[i] == '=' {
+					// valid base64, but only as the last 2 padding chars
+					if !((i == len(s)-1) ||
+						(i == (len(s)-2) && s[i+1] == '=')) {
+						// not last or last 2 not '='
+						base64 = false
+					}
+				}
+				hex = false
+				dec = false
+			} else if skipLen != 0 {
+				skipChrs++
+			}
+		} else if !(s[i] >= '0' && s[i] <= '9') {
+			dec = false
+			if !((s[i] >= 'A' && s[i] <= 'F') ||
+				(s[i] >= 'a' && s[i] <= 'f')) {
+				hex = false
+				if !((s[i] >= 'E' && s[i] <= 'Z') ||
+					(s[i] >= 'e' && s[i] <= 'z')) {
+					base64 = false
+				}
+			}
+			if s[i] >= 'a' && s[i] <= 'z' {
+				fLowerCase = true
+			} else if s[i] >= 'A' && s[i] <= 'Z' {
+				fUpperCase = true
+			}
+		}
+	}
+	l := len(s) - skipLen - skipChrs
+	// guess encoding only if enough chars
+	if l >= 32 {
+		// ignore decimal only for now, too high risk of confusing it with hex
+
+		// hex encoding if only hex range found, len multiple of 2 and no
+		// mixed case (mixed case => probably base64)
+		if (dec || hex) && (l%2 == 0) && !(fLowerCase && fUpperCase) {
+			sig |= SigHexEncF
+		} else if base64 && (l%4 == 0) {
+			// ignore base64 encoding that skip padding (for now)
+			sig |= SigB64EncF
 		}
 	}
 	return sig

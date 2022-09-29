@@ -89,16 +89,37 @@ func GetHdrSigId(h Hdr) (HdrSigId, ErrorHdr) {
 	return 0xff, ErrHdrBad
 }
 
+// StrSigId contains a signature for some string (e.g. call-id content)
+type StrSigId uint16
+
+const (
+	SigIPStartF StrSigId = 1 << iota
+	SigIPEndF
+	SigIPMiddleF
+	SigHasAtF    // @
+	SigHasDotF   // .
+	SigHasColonF // :
+	SigHasEqF    // =
+	SigHasDashF  // -
+	SigHasUnderF // _
+)
+
 // MsgSig contains the message signature.
 type MsgSig struct {
 	Method    SIPMethod
+	CidSLen   uint8    // call-id "short" length (w/o ip)
+	CidSig    StrSigId // call-id sig
+	FromSig   StrSigId // from sig
 	HdrSig    [NoSigHdrs]HdrSigId
 	HdrSigLen int // number of entries in HdrSig
 }
 
 // String() returns the string format for s, mostly for debugging.
-// Format: hex string -- method hdr_sig_id... ,
-//         all represented by a single hex digit
+// Format: hex string -- method hdr_sig_id... C cid_sig cid_len F from_sig ,
+//         method & hdr_sig_id are represented by a single hex digit
+//         cid_sig is 4 digits (16 bits)
+//         cid_len is 2 digits  (8 bit)
+//         from_sig is 4 digits  (16 bits)
 func (s MsgSig) String() string {
 	const hextable = "0123456789abcdef"
 	var sb strings.Builder
@@ -121,6 +142,25 @@ func (s MsgSig) String() string {
 		}
 		sb.WriteByte(hextable[int(s.HdrSig[i])&0xf])
 	}
+
+	// add callid
+	sb.WriteByte('I')
+	// 4 hex digits  flags
+	for i := 3; i >= 0; i-- {
+		d := (uint32(s.CidSig) >> (4 * i)) & 0xf
+		sb.WriteByte(hextable[int(d)])
+	}
+	// 2 hex digits  len
+	sb.WriteByte(hextable[int((s.CidSLen>>4)&0xf)])
+	sb.WriteByte(hextable[int(s.CidSLen&0xf)])
+
+	// add from
+	sb.WriteByte('F')
+	// 4 hex digits  flags
+	for i := 3; i >= 0; i-- {
+		d := (uint32(s.CidSig) >> (4 * i)) & 0xf
+		sb.WriteByte(hextable[int(d)])
+	}
 	return sb.String()
 }
 
@@ -137,6 +177,11 @@ func GetMsgSig(msg *PSIPMsg) (MsgSig, ErrorHdr) {
 		return sig, ErrHdrEmpty // no sig, not request
 	}
 	sig.Method = msg.FL.MethodNo
+	// call-id
+	cid := msg.PV.GetCallID().CallID.Get(msg.Buf)
+	sig.CidSig, sig.CidSLen = GetCallIDSig(cid)
+	// from-tag
+	sig.FromSig = getStrCharsSig(msg.PV.GetFrom().Tag.Get(msg.Buf), 0, 0)
 	// hdr sigs
 	var seen HdrFlags
 	sig.HdrSigLen = 0
@@ -165,4 +210,59 @@ func GetMsgSig(msg *PSIPMsg) (MsgSig, ErrorHdr) {
 		return sig, ErrHdrTrunc
 	}
 	return sig, ErrHdrOk
+}
+
+func getStrCharsSig(s []byte, skipOffs, skipLen int) StrSigId {
+	var sig StrSigId
+	for i := 0; i < len(s); i++ {
+		if i >= skipOffs && i < (skipOffs+skipLen) {
+			// ignore this part
+			continue
+		}
+		switch s[i] {
+		case '@':
+			sig |= SigHasAtF
+		case '.':
+			sig |= SigHasDotF
+		case ':':
+			sig |= SigHasColonF
+		case '=':
+			sig |= SigHasEqF
+		case '-':
+			sig |= SigHasDashF
+		case '_':
+			sig |= SigHasUnderF
+		}
+	}
+	return sig
+}
+
+// GetCallIDSig returns a call-id sig and a sig len (call-id lenght w/o ip).
+func GetCallIDSig(cid []byte) (StrSigId, uint8) {
+	// check if callid contains an ip
+	var ipOffs, ipLen int
+	var sig StrSigId
+	if ok, ipOffs, ipLen := ContainsIP4(cid, nil); ok {
+		if ipOffs == 0 {
+			sig |= SigIPStartF
+		} else if (ipOffs + ipLen) == len(cid) {
+			sig |= SigIPEndF
+		} else {
+			sig |= SigIPMiddleF
+		}
+	} else {
+		// TODO: try ipv6
+	}
+	// look for special chars, skipping over the ip
+	sig |= getStrCharsSig(cid, ipOffs, ipLen)
+	// add len
+	clen := len(cid) - ipLen
+	if clen > 0xff {
+		// excesive  lenghts are represented by 0xff
+		clen = 0xff
+	}
+	// limit len to max 1023
+	// sig format: 16 bit flags | 4 bit reserved |  12 bits trunc. length
+	// sig = sig<<16 | (StrSigId(clen) & 0x0fff)
+	return sig, uint8(clen & 0xff)
 }

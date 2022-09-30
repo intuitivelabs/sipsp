@@ -117,6 +117,7 @@ type MsgSig struct {
 	CidSLen   uint8    // call-id "short" length (w/o ip)
 	CidSig    StrSigId // call-id sig
 	FromSig   StrSigId // from sig
+	CSeq      uint8    // cseq sig == range class
 	HdrSig    [NoSigHdrs]HdrSigId
 	HdrSigLen int // number of entries in HdrSig
 }
@@ -168,6 +169,13 @@ func (s MsgSig) String() string {
 		d := (uint32(s.FromSig) >> (4 * i)) & 0xf
 		sb.WriteByte(hextable[int(d)])
 	}
+	// add cseq
+	sb.WriteByte('C')
+	// 4 hex digits  flags
+	for i := 1; i >= 0; i-- {
+		d := (uint32(s.CSeq) >> (4 * i)) & 0xf
+		sb.WriteByte(hextable[int(d)])
+	}
 	return sb.String()
 }
 
@@ -189,6 +197,19 @@ func GetMsgSig(msg *PSIPMsg) (MsgSig, ErrorHdr) {
 	sig.CidSig, sig.CidSLen = GetCallIDSig(cid)
 	// from-tag
 	sig.FromSig = getStrCharsSig(msg.PV.GetFrom().Tag.Get(msg.Buf), 0, 0)
+
+	// cseq sig == cseq value range
+	cseq := msg.PV.GetCSeq().CSeqNo
+	if cseq < 10000 {
+		sig.CSeq = uint8(cseq / 100)
+	} else if cseq < 100000 {
+		sig.CSeq = 100 + uint8((cseq-10000)/1000)
+	} else if cseq < 740000 {
+		sig.CSeq = 190 + uint8((cseq-100000)/10000)
+	} else {
+		sig.CSeq = 0xff // really big start value
+	}
+
 	// hdr sigs
 	var seen HdrFlags
 	sig.HdrSigLen = 0

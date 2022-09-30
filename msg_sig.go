@@ -378,7 +378,11 @@ func GetCallIDSig(cid []byte) (StrSigId, uint8) {
 	// check if callid contains an ip
 	var ipOffs, ipLen int
 	var sig StrSigId
-	if ok, ipOffs, ipLen := ContainsIP4(cid, nil); ok {
+	hasIP, ipOffs, ipLen := ContainsIP4(cid, nil)
+	if !hasIP {
+		hasIP, ipOffs, ipLen = ContainsIP6(cid, nil)
+	}
+	if hasIP {
 		if ipOffs == 0 {
 			sig |= SigIPStartF
 		} else if (ipOffs + ipLen) == len(cid) {
@@ -386,8 +390,6 @@ func GetCallIDSig(cid []byte) (StrSigId, uint8) {
 		} else {
 			sig |= SigIPMiddleF
 		}
-	} else {
-		// TODO: try ipv6
 	}
 	// look for special chars, skipping over the ip
 	sig |= getStrCharsSig(cid, ipOffs, ipLen)

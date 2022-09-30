@@ -96,17 +96,19 @@ const (
 	SigIPStartF StrSigId = 1 << iota
 	SigIPEndF
 	SigIPMiddleF
-	SigHasAtF    // @
-	SigHasDotF   // .
-	SigHasColonF // :
-	SigHasDashF  // -
-	SigHasStarF  // *
-	SigHasDivF   // /
-	SigHasPlusF  // +
-	SigHasEqF    // =
-	SigHasUnderF // _
-	SigHexEncF   // hex encoding
-	SigB64EncF   // base 64 encoding
+	SigHasAtF     // @
+	SigHasDotF    // .
+	SigHasColonF  // :
+	SigHasDashF   // -
+	SigHasStarF   // *
+	SigHasDivF    // /
+	SigHasPlusF   // +
+	SigHasEqF     // =
+	SigHasUnderF  // _
+	SigHasPipeF   // |
+	SigHexEncF    // hex encoding
+	SigB64EncF    // base 64 encoding
+	SigDigBlocksF // composed of multiple digits blocks
 )
 
 // MsgSig contains the message signature.
@@ -163,7 +165,7 @@ func (s MsgSig) String() string {
 	sb.WriteByte('F')
 	// 4 hex digits  flags
 	for i := 3; i >= 0; i-- {
-		d := (uint32(s.CidSig) >> (4 * i)) & 0xf
+		d := (uint32(s.FromSig) >> (4 * i)) & 0xf
 		sb.WriteByte(hextable[int(d)])
 	}
 	return sb.String()
@@ -237,12 +239,17 @@ func resCharSigFlag(c byte) (sig StrSigId) {
 		sig |= SigHasDivF
 	case '=':
 		sig |= SigHasEqF
+	case '|':
+		sig |= SigHasPipeF
 	}
 	return
 }
 
 func getStrCharsSig(s []byte, skipOffs, skipLen int) StrSigId {
 	var sig StrSigId
+	var sep byte // separator (if found)
+	var sepNo int
+	bstart := 0 // current digit block start
 	base64 := true
 	hex := true
 	dec := true
@@ -254,11 +261,15 @@ func getStrCharsSig(s []byte, skipOffs, skipLen int) StrSigId {
 			// ignore this part
 			continue
 		}
+		if i == skipOffs+skipLen {
+			bstart = i // start  a new digit block after the ip
+		}
 		if f := resCharSigFlag(s[i]); f != 0 {
 			sig |= f
 			// ip@something -> ignore '@' or other reserved char immediately
 			// after an ip, in hex or base64 guessing
-			if skipLen != 0 && (i != skipOffs+skipLen && i != (skipOffs-1)) {
+			if (skipLen == 0) ||
+				(i != skipOffs+skipLen && i != (skipOffs-1)) {
 				// not immediately after or before an ip
 				if base64 && !(s[i] == '+' || s[i] == '/' || s[i] == '=') {
 					// special char different from + / =  => not base64
@@ -271,9 +282,33 @@ func getStrCharsSig(s []byte, skipOffs, skipLen int) StrSigId {
 						base64 = false
 					}
 				}
-				hex = false
-				dec = false
-			} else if skipLen != 0 {
+				if sep == 0 {
+					sep = s[i]
+					sepNo++
+				} else if sep == s[i] {
+					sepNo++
+				}
+				if i > 0 {
+					if sep != s[i] || (i <= bstart) {
+						// different sep found or 2 seps in a row =>
+						// format is not block separated dec or hex
+						dec = false
+						hex = false
+					} else if sep == s[i] &&
+						((i > bstart) && ((i-bstart)%2 != 0)) {
+						// block between separators found, but odd length
+						// => not hex
+						hex = false
+					}
+				}
+				bstart = i + 1 // start  new block after delim.
+			} else {
+				//  immediately after or before  an ip (skip portion)
+				// char just before ip or immediately after ip
+				if i == skipOffs+skipLen {
+					// first char after ip -> ignore
+					bstart = i + 1 // next digit block start after ip delim
+				}
 				skipChrs++
 			}
 		} else if !(s[i] >= '0' && s[i] <= '9') {
@@ -293,15 +328,22 @@ func getStrCharsSig(s []byte, skipOffs, skipLen int) StrSigId {
 			}
 		}
 	}
-	l := len(s) - skipLen - skipChrs
+	l := len(s) - skipLen - skipChrs - sepNo
+	blen := len(s) - bstart
 	// guess encoding only if enough chars
-	if l >= 32 {
+	if l >= 10 {
 		// ignore decimal only for now, too high risk of confusing it with hex
 
 		// hex encoding if only hex range found, len multiple of 2 and no
 		// mixed case (mixed case => probably base64)
-		if (dec || hex) && (l%2 == 0) && !(fLowerCase && fUpperCase) {
+		if (dec || hex) &&
+			((sep == 0 && l%2 == 0) ||
+				(sep != 0 && blen >= 0 && (blen%2 == 0))) &&
+			!(fLowerCase && fUpperCase) {
 			sig |= SigHexEncF
+			if sep != 0 {
+				sig |= SigDigBlocksF
+			}
 		} else if base64 && (l%4 == 0) {
 			// ignore base64 encoding that skip padding (for now)
 			sig |= SigB64EncF

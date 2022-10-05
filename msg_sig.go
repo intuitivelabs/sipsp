@@ -298,7 +298,10 @@ func getStrCharsSig(s []byte, skipOffs, skipLen int) (StrSigId, int) {
 	var sig StrSigId
 	var sep byte // separator (if found)
 	var sepNo int
-	bstart := 0 // current digit block start
+	//bstart := 0     // current digit block start
+	hexMConsec := 0 // maximum consecutive hex digits
+	hexConsec := 0  // consecutive hex digits in current block
+	hexBlocks := 0  // non-empty hex blocks
 	base64 := true
 	hex := true
 	dec := true
@@ -311,7 +314,14 @@ func getStrCharsSig(s []byte, skipOffs, skipLen int) (StrSigId, int) {
 			continue
 		}
 		if i == skipOffs+skipLen {
-			bstart = i // start  a new digit block after the ip
+			//bstart = i // start  a new digit block after the ip
+			if hexConsec > 0 {
+				hexBlocks++
+				if hexConsec > hexMConsec {
+					hexMConsec = hexConsec
+				}
+				hexConsec = 0
+			}
 		}
 		if f := resCharSigFlag(s[i]); f != 0 {
 			sig |= f
@@ -338,25 +348,39 @@ func getStrCharsSig(s []byte, skipOffs, skipLen int) (StrSigId, int) {
 					sepNo++
 				}
 				if i > 0 {
-					if sep != s[i] || (i <= bstart) {
-						// different sep found or 2 seps in a row =>
+					if sep != s[i] {
+						// different sep found
 						// format is not block separated dec or hex
 						dec = false
 						hex = false
-					} else if sep == s[i] &&
+					} /*else if sep == s[i] &&
 						((i > bstart) && ((i-bstart)%2 != 0)) {
 						// block between separators found, but odd length
 						// => not hex
 						hex = false
-					}
+					} */
 				}
-				bstart = i + 1 // start  new block after delim.
+				//bstart = i + 1 // start  new block after delim.
+				if hexConsec > 0 {
+					hexBlocks++
+					if hexConsec > hexMConsec {
+						hexMConsec = hexConsec
+					}
+					hexConsec = 0
+				}
 			} else {
 				//  immediately after or before  an ip (skip portion)
 				// char just before ip or immediately after ip
 				if i == skipOffs+skipLen {
 					// first char after ip -> ignore
-					bstart = i + 1 // next digit block start after ip delim
+					//bstart = i + 1 // next digit block start after ip delim
+					if hexConsec > 0 {
+						hexBlocks++
+						if hexConsec > hexMConsec {
+							hexMConsec = hexConsec
+						}
+						hexConsec = 0
+					}
 				}
 				skipChrs++
 			}
@@ -369,16 +393,27 @@ func getStrCharsSig(s []byte, skipOffs, skipLen int) (StrSigId, int) {
 					(s[i] >= 'e' && s[i] <= 'z')) {
 					base64 = false
 				}
+			} else {
+				hexConsec++
 			}
 			if s[i] >= 'a' && s[i] <= 'z' {
 				fLowerCase = true
 			} else if s[i] >= 'A' && s[i] <= 'Z' {
 				fUpperCase = true
 			}
+		} else {
+			hexConsec++
 		}
 	}
 	l := len(s) - skipLen - skipChrs - sepNo
-	blen := len(s) - bstart
+	//	blen := len(s) - bstart
+	if hexConsec > 0 {
+		hexBlocks++
+		if hexConsec > hexMConsec {
+			hexMConsec = hexConsec
+		}
+		hexConsec = 0
+	}
 	// guess encoding only if enough chars
 	if l >= 8 {
 		// ignore decimal only for now, too high risk of confusing it with hex
@@ -387,7 +422,8 @@ func getStrCharsSig(s []byte, skipOffs, skipLen int) (StrSigId, int) {
 		// mixed case (mixed case => probably base64)
 		if (dec || hex) &&
 			((sep == 0) ||
-				(sep != 0 && blen >= 0)) &&
+				(sep != 0 && (hexMConsec >= 8 ||
+					(hexMConsec > 0 && hexBlocks >= 4)))) &&
 			!(fLowerCase && fUpperCase) {
 			sig |= SigHexEncF
 			if sep != 0 {

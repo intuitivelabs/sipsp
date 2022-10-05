@@ -7,8 +7,11 @@
 package sipsp
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
+
+	"github.com/intuitivelabs/bytescase"
 )
 
 // header order signature includes the following headers:
@@ -117,6 +120,7 @@ type MsgSig struct {
 	CidSLen uint8    // call-id "short" length (w/o ip)
 	CidSig  StrSigId // call-id sig
 	FromSig StrSigId // from sig
+	ViaBSig StrSigId // via branch sig
 	// CSeq      uint8    // cseq sig == range class - disabled, too random
 	HdrSig    [NoSigHdrs]HdrSigId
 	HdrSigLen int // number of entries in HdrSig
@@ -169,6 +173,15 @@ func (s MsgSig) String() string {
 		d := (uint32(s.FromSig) >> (4 * i)) & 0xf
 		sb.WriteByte(hextable[int(d)])
 	}
+
+	// via branch sig
+	sb.WriteByte('V')
+	// 4 hex digits  flags
+	for i := 3; i >= 0; i-- {
+		d := (uint32(s.ViaBSig) >> (4 * i)) & 0xf
+		sb.WriteByte(hextable[int(d)])
+	}
+
 	/* cseq sig disabled: several UAs use random start CSeqs
 	// add cseq
 	sb.WriteByte('C')
@@ -214,13 +227,19 @@ func GetMsgSig(msg *PSIPMsg) (MsgSig, ErrorHdr) {
 	}
 	*/
 
-	// hdr sigs
+	// hdr sigs + via sig
 	var seen HdrFlags
 	sig.HdrSigLen = 0
 	for _, h := range msg.HL.Hdrs {
 		// add to sig only the first hdr occurence
 		if !seen.Test(h.Type) {
 			seen.Set(h.Type)
+			// use 1st via for via branch sig
+			// (temporary hack until a via parser is added and the
+			// the 1st via is parsed automatically -- TODO)
+			if h.Type == HdrVia {
+				sig.ViaBSig, _ = GetViaBrSig(h.Val.Get(msg.Buf))
+			}
 			s, err := GetHdrSigId(h)
 			// skip over Contact for non-Invites (it's optional even for
 			// REGs, e.g. reg-fetch)
@@ -413,4 +432,68 @@ func GetCallIDSig(cid []byte) (StrSigId, uint8) {
 	// sig format: 16 bit flags | 4 bit reserved |  8 bits trunc. length/4
 	// sig = sig<<16 | (StrSigId(clen) & 0x0fff)
 	return sig, uint8(clen & 0xff)
+}
+
+// GetViaBrSig returns a via branch sig and a sig len.
+// viab should contain the via body complete with parameters.
+func GetViaBrSig(viab []byte) (StrSigId, int) {
+	// ';' separated, ',' or end of string ended
+	const flags = POptParamSemiSepF | POptTokCommaTermF | POptInputEndF
+	const brPrefix = "z9hG4bK" // rfc3261 branch preifx
+	var param PTokParam
+	var sig StrSigId
+	var sigLen int
+	var next int
+	var err ErrorHdr
+
+	offs := bytes.IndexByte(viab, ';')
+	if offs == -1 {
+		return 0, 0 // no params
+	}
+	offs++ // skip over ';'
+parse_params:
+	for {
+		next, err = ParseTokenParam(viab, offs, &param, flags)
+		switch err {
+		case 0, ErrHdrMoreValues, ErrHdrEOH:
+			// found a parameter, check if it is the branch
+			if param.Name.Len == 6 {
+				name := param.Name.Get(viab)
+				if bytescase.CmpEq(name, []byte("branch")) {
+					// check value
+					if param.Val.Len > 0 {
+						val := param.Val.Get(viab)
+						// if it starts with rfc3261 branch prefix
+						if len(val) > len(brPrefix) &&
+							bytescase.CmpEq(val[:len(brPrefix)],
+								[]byte(brPrefix)) {
+							sig, _ = getStrCharsSig(val[len(brPrefix):],
+								0, 0)
+							sigLen = len(val) - len(brPrefix)
+						} else {
+							// old style, use the whole branch value for the
+							// sig
+							sig, _ = getStrCharsSig(val, 0, 0)
+							sigLen = len(val)
+						}
+					}
+					// found the "branch" parameters, stop here
+					break parse_params
+				}
+			}
+			// try next value
+			if err == ErrHdrMoreValues {
+				offs = next
+				param.Reset()
+				continue
+			}
+			// else exit
+		case ErrHdrMoreBytes:
+			// do nothing -> exit
+		default:
+			// some error -> do nothing (exit)
+		}
+		break
+	}
+	return sig, sigLen
 }

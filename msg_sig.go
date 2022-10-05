@@ -359,7 +359,7 @@ func getStrCharsSig(s []byte, skipOffs, skipLen int) StrSigId {
 	l := len(s) - skipLen - skipChrs - sepNo
 	blen := len(s) - bstart
 	// guess encoding only if enough chars
-	if l >= 10 {
+	if l >= 8 {
 		// ignore decimal only for now, too high risk of confusing it with hex
 
 		// hex encoding if only hex range found, len multiple of 2 and no

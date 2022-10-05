@@ -365,8 +365,8 @@ func getStrCharsSig(s []byte, skipOffs, skipLen int) StrSigId {
 		// hex encoding if only hex range found, len multiple of 2 and no
 		// mixed case (mixed case => probably base64)
 		if (dec || hex) &&
-			((sep == 0 && l%2 == 0) ||
-				(sep != 0 && blen >= 0 && (blen%2 == 0))) &&
+			((sep == 0) ||
+				(sep != 0 && blen >= 0)) &&
 			!(fLowerCase && fUpperCase) {
 			sig |= SigHexEncF
 			if sep != 0 {

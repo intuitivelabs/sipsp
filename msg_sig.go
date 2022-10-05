@@ -222,7 +222,10 @@ func GetMsgSig(msg *PSIPMsg) (MsgSig, ErrorHdr) {
 		if !seen.Test(h.Type) {
 			seen.Set(h.Type)
 			s, err := GetHdrSigId(h)
-			if err == ErrHdrOk {
+			// skip over Contact for non-Invites (it's optional even for
+			// REGs, e.g. reg-fetch)
+			if err == ErrHdrOk &&
+				(h.Type != HdrContact || sig.Method == MInvite) {
 				sig.HdrSig[sig.HdrSigLen] = s
 				sig.HdrSigLen++
 				if sig.HdrSigLen >= len(sig.HdrSig) {

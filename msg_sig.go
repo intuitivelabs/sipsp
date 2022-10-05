@@ -198,7 +198,7 @@ func GetMsgSig(msg *PSIPMsg) (MsgSig, ErrorHdr) {
 	cid := msg.PV.GetCallID().CallID.Get(msg.Buf)
 	sig.CidSig, sig.CidSLen = GetCallIDSig(cid)
 	// from-tag
-	sig.FromSig = getStrCharsSig(msg.PV.GetFrom().Tag.Get(msg.Buf), 0, 0)
+	sig.FromSig, _ = getStrCharsSig(msg.PV.GetFrom().Tag.Get(msg.Buf), 0, 0)
 
 	// cseq sig == cseq value range
 	/* cseq sig disabled, start cseq is often a random value
@@ -273,7 +273,9 @@ func resCharSigFlag(c byte) (sig StrSigId) {
 	return
 }
 
-func getStrCharsSig(s []byte, skipOffs, skipLen int) StrSigId {
+// returns  string sig and number of extra chars/seps skipped
+//          (not including skipLen)
+func getStrCharsSig(s []byte, skipOffs, skipLen int) (StrSigId, int) {
 	var sig StrSigId
 	var sep byte // separator (if found)
 	var sepNo int
@@ -377,7 +379,7 @@ func getStrCharsSig(s []byte, skipOffs, skipLen int) StrSigId {
 			sig |= SigB64EncF
 		}
 	}
-	return sig
+	return sig, skipChrs
 }
 
 // GetCallIDSig returns a call-id sig and a sig len (call-id lenght w/o ip).
@@ -399,15 +401,16 @@ func GetCallIDSig(cid []byte) (StrSigId, uint8) {
 		}
 	}
 	// look for special chars, skipping over the ip
-	sig |= getStrCharsSig(cid, ipOffs, ipLen)
-	// add len
-	clen := len(cid) - ipLen
+	s, skipChrs := getStrCharsSig(cid, ipOffs, ipLen)
+	sig |= s
+	// add len = length without ip, rounded to multiple of 4
+	clen := ((len(cid) - ipLen - skipChrs) + 3) / 4
 	if clen > 0xff {
 		// excesive  lenghts are represented by 0xff
 		clen = 0xff
 	}
-	// limit len to max 1023
-	// sig format: 16 bit flags | 4 bit reserved |  12 bits trunc. length
+	// limit len to max 0xff
+	// sig format: 16 bit flags | 4 bit reserved |  8 bits trunc. length/4
 	// sig = sig<<16 | (StrSigId(clen) & 0x0fff)
 	return sig, uint8(clen & 0xff)
 }

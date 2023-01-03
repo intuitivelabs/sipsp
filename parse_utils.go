@@ -6,13 +6,33 @@
 
 package sipsp
 
+// POptFlags contains various parsing options flags.
+type POptFlags uint
+
+// parsing flags
+const POptNoneF POptFlags = 0
+const (
+	POptTokCommaTermF POptFlags = 1 << iota // comma is a terminator
+	POptTokQmTermF                          // '?' is a terminator
+	POptTokSpTermF                          // whitespace is a terminator
+	POptInputEndF                           // inputs end at end of buf
+	POptParamSemiSepF                       // param. separator is ';'
+	POptParamAmpSepF                        // param. separator is '&'
+	POptTokURIParamF                        // parse as uri param
+	POptTokURIHdrF                          //  parse as uri hdr ('&' sep)
+)
+
 //skipLWS jumps over white space (including CRLF SP).
 // It returns and offset pointing after the white space or
 // ErrHdrEOH and the CR offset and length if the end of header was found or
 // errHdrMoreBytes and a "continuation" offset if the input buffer
 // was exhausted or it is not big enough to allow checking for CRLF SP.
 // It accepts also CR SP  or LF SP.
-func skipLWS(buf []byte, offs int) (int, int, ErrorHdr) {
+// If the PTokInputEndF  flag is set it will return an offset  past the
+// buffer  (== buffer length), a 0 crlf length and ErrHdrEOH if it reaches
+// the end of the buffer (otherwise it returns ErrHdrEOH only if it finds
+// a CR LF followed by non space).
+func skipLWS(buf []byte, offs int, flags POptFlags) (int, int, ErrorHdr) {
 	i := offs
 	for ; i < len(buf); i++ {
 		c := buf[i]
@@ -24,6 +44,10 @@ func skipLWS(buf []byte, offs int) (int, int, ErrorHdr) {
 			n, crl, err := skipCRLF(buf, i)
 			if err == 0 {
 				if n >= len(buf) {
+					if flags&POptInputEndF != 0 {
+						// special case: consider end of buf == end of hdr
+						return n, 0, ErrHdrEOH
+					}
 					// return current position, the CRLF SP has to be re-tried
 					// with more bytes
 					return i, 0, ErrHdrMoreBytes

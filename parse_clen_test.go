@@ -58,7 +58,7 @@ func TestParseCLenVal(t *testing.T) {
 			// should be the offset
 			iws := strings.IndexAny(c.clen, " \t\r\n")
 			if iws > 0 {
-				iws, _, _ = skipLWS([]byte(c.clen), iws)
+				iws, _, _ = skipLWS([]byte(c.clen), iws, 0)
 				c.offs = len(fWS) + iws
 			} else {
 				c.offs = len(fWS) + len(c.clen) + len(eWS) + 2

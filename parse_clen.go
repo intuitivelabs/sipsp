@@ -99,7 +99,7 @@ func ParseUIntVal(buf []byte, offs int, pcl *PUIntBody) (int, ErrorHdr) {
 				pcl.state = clEnd
 				fallthrough
 			case clInit, clEnd:
-				n, crl, err = skipLWS(buf, i)
+				n, crl, err = skipLWS(buf, i, 0)
 				if err == 0 {
 					i = n
 					continue

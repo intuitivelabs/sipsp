@@ -61,7 +61,7 @@ func TestParseCallIDVal1(t *testing.T) {
 			// should be the offset
 			iws := strings.IndexAny(c.callid, " \t\r\n")
 			if iws > 0 {
-				iws, _, _ = skipLWS([]byte(c.callid), iws)
+				iws, _, _ = skipLWS([]byte(c.callid), iws, 0)
 				c.offs = len(fWS) + iws
 			} else {
 				c.offs = len(fWS) + len(c.callid) + len(eWS) + 2

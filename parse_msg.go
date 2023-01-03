@@ -31,11 +31,17 @@ type PSIPMsg struct {
 
 // Reset re-initializes the parsed message and the internal parsing state.
 func (m *PSIPMsg) Reset() {
-	*m = PSIPMsg{}
 	m.FL.Reset()
 	m.PV.Reset()
 	m.HL.Reset()
 	m.Body.Reset()
+	mbuf := m.Buf
+	hdrs := m.HL.Hdrs
+	cvals := m.PV.Contacts.Vals
+	*m = PSIPMsg{}
+	m.Buf = mbuf
+	m.HL.Hdrs = hdrs
+	m.PV.Contacts.Init(cvals)
 	m.SIPMsgIState = SIPMsgIState{}
 }
 

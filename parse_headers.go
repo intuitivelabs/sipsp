@@ -64,6 +64,8 @@ const (
 	HdrTo
 	HdrCallID
 	HdrCSeq
+	HdrVia
+	HdrMaxFwd
 	HdrCLen
 	HdrContact
 	HdrExpires
@@ -80,6 +82,8 @@ const (
 	HdrToF          HdrFlags = 1 << HdrTo
 	HdrCallIDF      HdrFlags = 1 << HdrCallID
 	HdrCSeqF        HdrFlags = 1 << HdrCSeq
+	HdrViaF         HdrFlags = 1 << HdrVia
+	HdrMaxFwdF      HdrFlags = 1 << HdrMaxFwd
 	HdrCLenF        HdrFlags = 1 << HdrCLen
 	HdrContactF     HdrFlags = 1 << HdrContact
 	HdrExpiresF     HdrFlags = 1 << HdrExpires
@@ -97,6 +101,8 @@ var hdrTStr = [...]string{
 	HdrTo:          "To",
 	HdrCallID:      "Call-ID",
 	HdrCSeq:        "Cseq",
+	HdrVia:         "Via",
+	HdrMaxFwd:      "Max-Forwards",
 	HdrCLen:        "Content-Length",
 	HdrContact:     "Contact",
 	HdrExpires:     "Expires",
@@ -131,6 +137,9 @@ var hdrName2Type = [...]hdr2Type{
 	{n: []byte("call-id"), t: HdrCallID},
 	{n: []byte("i"), t: HdrCallID},
 	{n: []byte("cseq"), t: HdrCSeq},
+	{n: []byte("via"), t: HdrVia},
+	{n: []byte("v"), t: HdrVia},
+	{n: []byte("max-forwards"), t: HdrMaxFwd},
 	{n: []byte("content-length"), t: HdrCLen},
 	{n: []byte("l"), t: HdrCLen},
 	{n: []byte("contact"), t: HdrContact},
@@ -561,7 +570,7 @@ func ParseHdrLine(buf []byte, offs int, h *Hdr, hb PHBodies) (int, ErrorHdr) {
 			}
 		case hBodyStart:
 			var err ErrorHdr
-			i, crl, err = skipLWS(buf, i)
+			i, crl, err = skipLWS(buf, i, 0)
 			switch err {
 			case 0:
 				h.state = hVal
@@ -586,7 +595,7 @@ func ParseHdrLine(buf []byte, offs int, h *Hdr, hb PHBodies) (int, ErrorHdr) {
 			fallthrough
 		case hValEnd:
 			var err ErrorHdr
-			i, crl, err = skipLWS(buf, i)
+			i, crl, err = skipLWS(buf, i, 0)
 			switch err {
 			case 0:
 				h.state = hVal

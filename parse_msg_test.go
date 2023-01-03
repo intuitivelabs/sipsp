@@ -72,8 +72,8 @@ Max-Forwards: 70
 Date: Thu, 21 Feb 2002 13:02:03 GMT
 Content-Length: 141
 `, n: 8,
-		hf: HdrFromF | HdrToF | HdrCallIDF | HdrCSeqF | HdrOtherF |
-			HdrCLenF,
+		hf: HdrFromF | HdrToF | HdrCallIDF | HdrCSeqF | HdrViaF | HdrMaxFwdF |
+			HdrOtherF | HdrCLenF,
 		body: `v=0
 o=UserA 2890844526 2890844526 IN IP4 here.com
 s=Session SDP
@@ -95,8 +95,8 @@ Expires: 0
 Date: Thu, 21 Feb 2002 13:02:03 GMT\r
 Content-Length: 0\r
 `, n: 10,
-		hf: HdrFromF | HdrToF | HdrCallIDF | HdrCSeqF | HdrOtherF |
-			HdrContactF | HdrExpiresF | HdrCLenF,
+		hf: HdrFromF | HdrToF | HdrCallIDF | HdrCSeqF | HdrViaF | HdrMaxFwdF |
+			HdrContactF | HdrExpiresF | HdrOtherF | HdrCLenF,
 		body: "", pf: SIPMsgSkipBodyF,
 	},
 	{m: `CANCEL sip:x@y.com SIP/2.0
@@ -106,7 +106,7 @@ Call-ID: a84b4c76e66710\r
 From: Second From <x@q.b>;tag=5678\r
 CSeq: 314159 INVITE\r
 CSeq: 914159 CANCEL\r
-Via: SIP/2.0/UDP 1.2.3.4;branch=z9hG4bKnashds8\r
+v: SIP/2.0/UDP 1.2.3.4;branch=z9hG4bKnashds8\r
 Max-Forwards: 70\r
 Date: Thu, 21 Feb 2002 13:02:03 GMT\r
 P-Asserted-Identity: "Test" <sip:b@foo.bar>\r
@@ -115,8 +115,8 @@ Contact: sip:a@foo.bar:5060,"A B" <sip:ab@x.y>;expires=60,\r
 Expires: 300 \r
 Content-Length: 568\r
 `, n: 13,
-		hf: HdrToF | HdrCallIDF | HdrFromF | HdrCSeqF | HdrOtherF |
-			HdrPAIF | HdrContactF | HdrExpiresF | HdrCLenF,
+		hf: HdrToF | HdrCallIDF | HdrFromF | HdrCSeqF | HdrViaF | HdrMaxFwdF |
+			HdrOtherF | HdrPAIF | HdrContactF | HdrExpiresF | HdrCLenF,
 		body: "", pf: SIPMsgSkipBodyF,
 	},
 	{m: `BYE sip:x@y.com SIP/2.0
@@ -134,8 +134,8 @@ Contact: sip:a@foo.bar:5060,"A B" <sip:ab@x.y>;expires=60,\r
 Expires: 300 \r
 Content-Length: 568\r
 `, n: 12,
-		hf: HdrToF | HdrCallIDF | HdrFromF | HdrCSeqF | HdrOtherF |
-			HdrPAIF | HdrContactF | HdrExpiresF | HdrCLenF,
+		hf: HdrToF | HdrCallIDF | HdrFromF | HdrCSeqF | HdrViaF | HdrMaxFwdF |
+			HdrOtherF | HdrPAIF | HdrContactF | HdrExpiresF | HdrCLenF,
 		body: "", pf: SIPMsgSkipBodyF,
 	},
 	{m: `SIP/2.0 200 Ok
@@ -155,8 +155,8 @@ Contact: sip:a@foo.bar:5060,"A B" <sip:ab@x.y>;expires=60,\r
 Expires: 300 \r
 Content-Length: 568\r
 `, n: 14,
-		hf: HdrToF | HdrCallIDF | HdrFromF | HdrCSeqF | HdrOtherF |
-			HdrPAIF | HdrContactF | HdrExpiresF | HdrCLenF,
+		hf: HdrToF | HdrCallIDF | HdrFromF | HdrCSeqF | HdrViaF | HdrMaxFwdF |
+			HdrOtherF | HdrPAIF | HdrContactF | HdrExpiresF | HdrCLenF,
 		body: "", pf: SIPMsgSkipBodyF,
 	},
 
@@ -170,8 +170,8 @@ Max-Forwards: 70\r
 Date: Thu, 21 Feb 2002 13:02:03 GMT\r
 Content-Length: 1553\r
 `, n: 8,
-		hf: HdrFromF | HdrToF | HdrCallIDF | HdrCSeqF | HdrOtherF |
-			HdrCLenF,
+		hf: HdrFromF | HdrToF | HdrCallIDF | HdrCSeqF | HdrViaF | HdrMaxFwdF |
+			HdrOtherF | HdrCLenF,
 		body: `v=0\r
 o=UserA 2890844526 2890844526 IN IP4 long.body.com\r
 s=Session SDP\r

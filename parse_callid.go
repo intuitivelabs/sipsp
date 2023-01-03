@@ -77,7 +77,7 @@ func ParseCallIDVal(buf []byte, offs int, pcid *PCallIDBody) (int, ErrorHdr) {
 				pcid.state = ciEnd
 				fallthrough
 			case ciInit, ciEnd:
-				n, crl, err = skipLWS(buf, i)
+				n, crl, err = skipLWS(buf, i, 0)
 				if err == 0 {
 					i = n
 					continue
